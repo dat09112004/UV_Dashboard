@@ -1,0 +1,69 @@
+@media (prefers-reduced-motion: no-preference) {
+  [data-chart-entered] {
+    --chart-ease: cubic-bezier(.22, .68, .24, 1);
+  }
+
+  [data-chart-entered].debt-donut .recharts-pie,
+  [data-chart-entered].delivery-donut .recharts-pie {
+    transform-box: view-box;
+    transform-origin: center;
+    animation: chart-ring-in 520ms var(--chart-ease);
+  }
+
+  [data-chart-entered].category-plot .recharts-bar-rectangle path {
+    transform-box: fill-box;
+    transform-origin: center bottom;
+    animation: chart-column-in 480ms var(--chart-ease);
+  }
+
+  [data-chart-entered].cash-priority-plot .recharts-bar-rectangle path,
+  [data-chart-entered] .debt-overview-track > span,
+  [data-chart-entered] .receipt-chart-track > i,
+  [data-chart-entered].delivery-risk-bars b {
+    transform-box: fill-box;
+    transform-origin: left center;
+    animation: chart-bar-in 480ms var(--chart-ease) var(--chart-delay, 0ms) backwards;
+  }
+
+  [data-chart-entered] .revenue-bar-track > span {
+    animation: chart-segment-in 500ms var(--chart-ease) var(--chart-delay, 0ms) backwards;
+  }
+
+  [data-chart-entered] .recharts-label-list {
+    animation: chart-label-in 180ms ease-out 240ms backwards;
+  }
+
+  [data-chart-entered] :is(.revenue-bar-row, .debt-overview-bar, .receipt-chart-row):nth-child(2),
+  [data-chart-entered].delivery-risk-bars button:nth-child(2) { --chart-delay: 36ms; }
+
+  [data-chart-entered] :is(.revenue-bar-row, .debt-overview-bar, .receipt-chart-row):nth-child(3),
+  [data-chart-entered].delivery-risk-bars button:nth-child(3) { --chart-delay: 72ms; }
+
+  [data-chart-entered] :is(.revenue-bar-row, .debt-overview-bar, .receipt-chart-row):nth-child(n+4),
+  [data-chart-entered].delivery-risk-bars button:nth-child(n+4) { --chart-delay: 108ms; }
+}
+
+@keyframes chart-ring-in {
+  from { opacity: .2; transform: scale(.92); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes chart-column-in {
+  from { opacity: .4; transform: scaleY(.05); }
+  to { opacity: 1; transform: scaleY(1); }
+}
+
+@keyframes chart-bar-in {
+  from { opacity: .4; transform: scaleX(.04); }
+  to { opacity: 1; transform: scaleX(1); }
+}
+
+@keyframes chart-segment-in {
+  from { opacity: 0; clip-path: inset(0 100% 0 0); }
+  to { opacity: 1; clip-path: inset(0); }
+}
+
+@keyframes chart-label-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}

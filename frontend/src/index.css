@@ -1,0 +1,17 @@
+@import './styles/variables.css';
+@import './styles/global.css';
+@import './styles/themes/light.css';
+@import './styles/themes/dark.css';
+@import './styles/dashboard-priority.css';
+@import './styles/order-fulfillment.css';
+@import './styles/workflow.css';
+@import './styles/executive-theme.css';
+@import './styles/delivery-analytics.css';
+@import './styles/debt-overview.css';
+@import './styles/account-menu.css';
+@import './styles/chart-motion.css';
+@import './styles/management.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;

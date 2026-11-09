@@ -1,0 +1,15 @@
+export const ENDPOINTS = {
+  AUTH: '/auth',
+  DASHBOARD: '/dashboard/summary',
+  POS: '/orders/pos',
+  SHIPMENTS: '/orders/shipments',
+  PROGRESS: '/operations/progress',
+  TASKS: '/operations/tasks',
+  REVENUE: '/finance/revenue',
+  RECEIVABLES: '/finance/receivables',
+  PAYABLES: '/finance/payables',
+  ALLOCATIONS: '/finance/allocations',
+  REPORTS: '/reports',
+  CATALOG: '/admin/catalog',
+  AUDIT_LOGS: '/admin/audit-logs',
+};

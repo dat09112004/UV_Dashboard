@@ -1,0 +1,11 @@
+{
+  "appTitle": "Tổng quan điều hành",
+  "nav": {
+    "overview": "Tổng quan",
+    "orders": "Đơn hàng",
+    "operations": "Vận hành",
+    "finance": "Tài chính",
+    "reports": "Báo cáo",
+    "admin": "Quản trị"
+  }
+}

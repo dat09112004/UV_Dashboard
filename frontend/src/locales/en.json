@@ -1,0 +1,11 @@
+{
+  "appTitle": "Executive Operations Dashboard",
+  "nav": {
+    "overview": "Overview",
+    "orders": "Purchase Orders",
+    "operations": "Operations & Tasks",
+    "finance": "Finance & Debt",
+    "reports": "Reports",
+    "admin": "Administration"
+  }
+}
