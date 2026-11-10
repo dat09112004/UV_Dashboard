@@ -1257,4 +1257,20 @@ export const english = {
   "Cảnh báo đỏ trên hệ thống & Trạng thái người đảm nhận": "System red alerts & assignee status",
   "Đã gửi nhắc việc đến CEO và Admin.": "Reminder sent to CEO and Admin.",
   "Đã giao việc nhanh và cập nhật trạng thái cảnh báo đỏ.": "Task assigned and red alert status updated."
+  ,"Vui lòng tích chọn đồng ý Chính sách bảo mật và Điều khoản sử dụng trước khi đăng nhập.": "Please agree to the Privacy Policy and Terms of Use before signing in."
+  ,"Tôi đã đọc và đồng ý với Chính sách bảo mật và Điều khoản sử dụng hệ thống": "I have read and agree to the system Privacy Policy and Terms of Use"
+  ,"Xem chi tiết Chính sách bảo mật & Điều khoản sử dụng": "View full Privacy Policy & Terms of Use"
+  ,"Chính sách bảo mật & Điều khoản sử dụng": "Privacy Policy & Terms of Use"
+  ,"Bảo mật dữ liệu kinh doanh & tài chính:": "Business & Financial Data Confidentiality:"
+  ,"Mọi thông tin đơn hàng mua (PO), đơn giá nhà cung cấp, chứng từ doanh thu, công nợ phải thu (AR) và công nợ phải trả (AP) là tài sản mật của Uyen Vu International. Nghiêm cấm sao chép hoặc chia sẻ trái phép ra ngoài phạm vi công việc.": "All purchase orders (PO), supplier unit prices, revenue invoices, accounts receivable (AR), and accounts payable (AP) are confidential assets of Uyen Vu International. Unauthorized copying or sharing outside your assigned scope is strictly prohibited."
+  ,"Phân quyền truy cập nghiêm ngặt (RBAC):": "Strict Role-Based Access Control (RBAC):"
+  ,"Tài khoản chỉ được phép truy cập các phân hệ, chứng từ và tệp đính kèm đúng với vai trò được CEO hoặc Quản trị viên cấp phép. Không chia sẻ mật khẩu hoặc mã phiên đăng nhập JWT cho bất kỳ ai.": "Your account may only access modules, documents, and attachments authorized for your role by the CEO or Administrator. Never share your password or JWT session token with anyone."
+  ,"Ghi vết kiểm toán & trách nhiệm giải trình:": "Audit Trail & Accountability:"
+  ,"Mọi thao tác cập nhật tiến độ, lập hóa đơn, phân bổ tiền thu, tách chứng từ phải trả, duyệt chi và bàn giao công việc đều được lưu vết kiểm toán tự động theo giờ Việt Nam (Asia/Ho_Chi_Minh).": "Every progress update, invoice entry, receipt allocation, payable split, payment approval, and task handover is automatically logged in the audit trail under Vietnam time (Asia/Ho_Chi_Minh)."
+  ,"Tôi đồng ý": "I Agree"
+  ,"Tìm tên, email…": "Search name, email…"
+  ,"Tìm tài khoản": "Search accounts"
+  ,"Lọc vai trò": "Filter by role"
+  ,"Tất cả vai trò": "All roles"
+  ,"Hệ thống Điều hành Uyen Vu International · Dữ liệu đồng bộ trực tiếp từ máy chủ PostgreSQL & Redis Cache.": "Uyen Vu International Executive System · Real-time data synchronized from PostgreSQL & Redis Cache."
 };

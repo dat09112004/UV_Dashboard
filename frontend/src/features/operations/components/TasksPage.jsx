@@ -1,6 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, ArrowLeft, BellRing, CheckCircle2, ChevronRight, ClipboardList, ClipboardPlus, Lock, Paperclip, Plus, RotateCcw, Search, X } from 'lucide-react';
 import { phrase, t, translate } from '../../../locales/i18n.js';
+import { useDebouncedValue } from '../../../hooks/useDebounce.js';
+import { useProgressivePagination } from '../../../hooks/useProgressivePagination.js';
+import ProgressivePaginationBar from '../../../components/common/ProgressivePaginationBar.jsx';
 import { businessToday, dateInputValue, parseBusinessDate } from '../../../utils/business.js';
 import { readTaskAttachment } from '../../users/services/demoDirectory.js';
 import { canDiscussTask, canManageTask, canViewManagedTask, canWorkOnAssignedTask, encodeTaskFiles, FILE_ACCEPT, canReceiveTasks,
@@ -139,6 +142,13 @@ export default function TasksPage({ tasks, reminders = [], accounts, actor, onAc
   const [searchQuery, setSearchQuery] = useState('');
   const [assigneeFilter, setAssigneeFilter] = useState('all');
   const [deadlineFilter, setDeadlineFilter] = useState('all');
+
+  // Debounced search and filter values for smooth UI & API filtering
+  const debouncedSearchQuery = useDebouncedValue(searchQuery, 300);
+  const debouncedFilter = useDebouncedValue(filter, 150);
+  const debouncedAssigneeFilter = useDebouncedValue(assigneeFilter, 150);
+  const debouncedDeadlineFilter = useDebouncedValue(deadlineFilter, 150);
+
   const [error, setError] = useState('');
   const [createError, setCreateError] = useState('');
   const [formVersion, setFormVersion] = useState(0);
@@ -163,13 +173,24 @@ export default function TasksPage({ tasks, reminders = [], accounts, actor, onAc
   const alertTasks = managing ? [] : queue.filter(task => task.sourceAlert && ![TASK_DONE, TASK_EXPIRED].includes(task.status));
   const pendingReminders = reminders.filter(r => r.status === REMINDER_PENDING);
   const rows = filterTaskRows(queue, {
-    statusFilter: filter,
-    searchQuery,
-    assigneeFilter,
-    deadlineFilter,
+    statusFilter: debouncedFilter,
+    searchQuery: debouncedSearchQuery,
+    assigneeFilter: debouncedAssigneeFilter,
+    deadlineFilter: debouncedDeadlineFilter,
     accounts,
     today,
   });
+
+  // Phân trang + Tải trước 1 phần & Cuộn tải dần + Xóa trang cũ khi đổi trang/tab
+  const pagination = useProgressivePagination(rows, {
+    sectionKey: managing ? (reReviewOnly ? 'assignment-reviews' : 'assignments') : 'tasks',
+    initialChunkSize: 6,
+    stepSize: 6,
+    pageSize: 12,
+    resetDeps: [debouncedFilter, debouncedSearchQuery, debouncedAssigneeFilter, debouncedDeadlineFilter],
+  });
+  const pagedRows = pagination.visibleItems;
+
   const hasExtraFilters = Boolean(searchQuery.trim() || assigneeFilter !== 'all' || deadlineFilter !== 'all' || filter !== 'all');
   const filterStatuses = managing ? statuses.filter(status => status !== TASK_REREVIEW) : statuses;
   const task = visible.find(row => row.id === selectedId);
@@ -325,10 +346,10 @@ export default function TasksPage({ tasks, reminders = [], accounts, actor, onAc
     return ok;
   };
 
-  const download = (taskId, fileId) => {
+  const download = async (taskId, fileId) => {
     setError('');
     try {
-      const { content, name } = readTaskAttachment(actor.id, taskId, fileId);
+      const { content, name } = await readTaskAttachment(actor.id, taskId, fileId);
       const bytes = Uint8Array.from(atob(content), value => value.charCodeAt(0));
       const url = URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' }));
       const link = document.createElement('a');
@@ -389,7 +410,6 @@ export default function TasksPage({ tasks, reminders = [], accounts, actor, onAc
       </div>
     </header>
 
-    {/* Khối Nhắc việc chờ giao việc nhanh dành cho Admin & CEO ngay trong trang Giao việc */}
     {managing && !reReviewOnly && pendingReminders.length > 0 && (
       <section className="analytics-card management-panel mb-4 border-l-4 border-l-amber-500 bg-amber-50/40" aria-label={t('Nhắc việc từ nhân viên chờ giao việc')}>
         <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
@@ -560,40 +580,43 @@ export default function TasksPage({ tasks, reminders = [], accounts, actor, onAc
         {hasExtraFilters && <button type="button" className="row-detail-button"
           onClick={() => { setFilter('all'); setSearchQuery(''); setAssigneeFilter('all'); setDeadlineFilter('all'); }}>{t('Xem tất cả công việc')}</button>}
       </div>}
-      {rows.length > 0 && <div className="table-scroll task-table-frame"><table className="management-table task-table">
-        <thead><tr>
-          <th scope="col">{t('Tên công việc')}</th>
-          <th scope="col">{t(contactLabel)}</th>
-          <th scope="col">{t('Hạn hoàn thành')}</th>
-          <th scope="col">{t('Trạng thái')}</th>
-        </tr></thead>
-        <tbody>{rows.map(row => {
-          const contact = accounts.find(account => account.id === (managing ? row.assigneeId : row.assignerId));
-          const hasFiles = row.fileIds?.length || row.submissions?.some(entry => entry.fileIds?.length);
-          const hasSavedDraft = !managing && [TASK_ACTIVE, TASK_RETURNED].includes(row.status) &&
-            Boolean(readTaskHandoverDraft(actor?.id, row.id).trim());
-          return <tr key={row.id} data-tone={taskTone(row.status)} onClick={() => openTask(row.id)}>
-            <td className="task-summary">
-              <button className="task-row-open" type="button" aria-haspopup="dialog">
-                {t(row.title)} <ChevronRight size={16} aria-hidden="true" />
-              </button>
-              <small className="task-description">{t(row.description)}</small>
-              {row.managerNote && <small className="italic text-sky-800 mt-0.5 block">{t('Ghi chú chỉ đạo:')} “{row.managerNote}”</small>}
-              {row.sourceAlert && <span className="task-alert-source">{t('Báo động đỏ')} · {row.sourceAlert.reference}</span>}
-              {hasSavedDraft && <span className="task-draft-badge">{t('Đang có bản nháp')}</span>}
-              {row.status === TASK_REREVIEW && <small>
-                {phrase('Nộp lại lần §', row.reviews.filter(entry => entry.approve === false).length)}
-              </small>}
-              {Boolean(hasFiles) && <span className="task-attachment"><Paperclip size={13} aria-hidden="true" />{t('Có tệp đính kèm')}</span>}
-            </td>
-            <td><span className="task-mobile-label">{t(contactLabel)}</span>{contact?.name || '—'}
-              {row.department && <small>{t(TASK_DEPARTMENTS[row.department])}</small>}</td>
-            <td><span className="task-mobile-label">{t('Hạn hoàn thành')}</span>{row.deadline}</td>
-            <td><span className="task-mobile-label">{t('Trạng thái')}</span>
-              <span className="fulfillment-status task-status" data-tone={taskTone(row.status)}>{t(row.status)}</span></td>
-          </tr>;
-        })}</tbody>
-      </table></div>}
+      {rows.length > 0 && <>
+        <div className="table-scroll task-table-frame"><table className="management-table task-table">
+          <thead><tr>
+            <th scope="col">{t('Tên công việc')}</th>
+            <th scope="col">{t(contactLabel)}</th>
+            <th scope="col">{t('Hạn hoàn thành')}</th>
+            <th scope="col">{t('Trạng thái')}</th>
+          </tr></thead>
+          <tbody>{pagedRows.map(row => {
+            const contact = accounts.find(account => account.id === (managing ? row.assigneeId : row.assignerId));
+            const hasFiles = row.fileIds?.length || row.submissions?.some(entry => entry.fileIds?.length);
+            const hasSavedDraft = !managing && [TASK_ACTIVE, TASK_RETURNED].includes(row.status) &&
+              Boolean(readTaskHandoverDraft(actor?.id, row.id).trim());
+            return <tr key={row.id} data-tone={taskTone(row.status)} onClick={() => openTask(row.id)}>
+              <td className="task-summary">
+                <button className="task-row-open" type="button" aria-haspopup="dialog">
+                  {t(row.title)} <ChevronRight size={16} aria-hidden="true" />
+                </button>
+                <small className="task-description">{t(row.description)}</small>
+                {row.managerNote && <small className="italic text-sky-800 mt-0.5 block">{t('Ghi chú chỉ đạo:')} “{row.managerNote}”</small>}
+                {row.sourceAlert && <span className="task-alert-source">{t('Báo động đỏ')} · {row.sourceAlert.reference}</span>}
+                {hasSavedDraft && <span className="task-draft-badge">{t('Đang có bản nháp')}</span>}
+                {row.status === TASK_REREVIEW && <small>
+                  {phrase('Nộp lại lần §', row.reviews.filter(entry => entry.approve === false).length)}
+                </small>}
+                {Boolean(hasFiles) && <span className="task-attachment"><Paperclip size={13} aria-hidden="true" />{t('Có tệp đính kèm')}</span>}
+              </td>
+              <td><span className="task-mobile-label">{t(contactLabel)}</span>{contact?.name || '—'}
+                {row.department && <small>{t(TASK_DEPARTMENTS[row.department])}</small>}</td>
+              <td><span className="task-mobile-label">{t('Hạn hoàn thành')}</span>{row.deadline}</td>
+              <td><span className="task-mobile-label">{t('Trạng thái')}</span>
+                <span className="fulfillment-status task-status" data-tone={taskTone(row.status)}>{t(row.status)}</span></td>
+            </tr>;
+          })}</tbody>
+        </table></div>
+        <ProgressivePaginationBar pagination={pagination} itemUnit="công việc" />
+      </>}
     </section>
     <dialog className="assignment-dialog task-detail-dialog" ref={detailRef} aria-labelledby="task-detail-title"
       onCancel={event => {

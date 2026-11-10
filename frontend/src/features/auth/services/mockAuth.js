@@ -1,41 +1,97 @@
-import { MOCK_ACCOUNTS } from '../../../mock/accounts.js';
-import { readDirectory, directoryProfiles } from '../../users/services/demoDirectory.js';
-import { createPasswordRecord, matchesPassword, validNewPassword } from './demoPasswords.js';
+import {
+  changePasswordApi,
+  clearAuthToken,
+  fetchBootstrapApi,
+  fetchFinanceStateApi,
+  fetchOrdersApi,
+  loginApi,
+  setAuthToken,
+} from '../../../services/api.js';
+import { setClientIdentity } from '../../../utils/permissions.js';
 
-// This store is only for demo accounts. Production credentials belong to the server.
-const passwordKey = id => `uv-demo-password-v1:${id}`;
-export async function attemptMockSignIn(email, password) {
+/**
+ * Xác thực đăng nhập trực tiếp với Backend API (/api/v1/auth/login).
+ * Kiểm tra bắt buộc đồng ý Chính sách bảo mật & Điều khoản sử dụng (`acceptedTerms`).
+ * Không sử dụng bất kỳ tài khoản mẫu (MOCK_ACCOUNTS) hay mật khẩu lưu trên trình duyệt nào.
+ */
+export async function attemptMockSignIn(email, password, acceptedTerms = true) {
+  if (!acceptedTerms) {
+    return {
+      status: 'terms_required',
+      message: 'Vui lòng tích chọn đồng ý Chính sách bảo mật và Điều khoản sử dụng trước khi đăng nhập.',
+    };
+  }
+
   const normalizedEmail = String(email || '').trim().toLowerCase();
-  const directory = readDirectory();
-  const account = directoryProfiles(directory).find(item => item.email === normalizedEmail);
-  if (!account || typeof password !== 'string' || password.length > 128) return { status: 'invalid' };
-  const saved = globalThis.localStorage?.getItem(passwordKey(account.id)) ?? directory.credentials[account.id] ?? null;
-  const demoSeed = MOCK_ACCOUNTS.find(item => item.id === account.id) || {};
-  if (!await matchesPassword(demoSeed, password, saved)) return { status: 'invalid' };
-  const latest = directoryProfiles(readDirectory()).find(item => item.id === account.id && item.email === normalizedEmail);
-  if (!latest) return { status: 'invalid' };
-  return latest.status === 'active' ? { status: 'authenticated', account: latest } : { status: 'locked' };
+  if (!normalizedEmail || typeof password !== 'string' || !password || password.length > 128) {
+    return { status: 'invalid' };
+  }
+
+  let response;
+  try {
+    response = await loginApi(normalizedEmail, password, true);
+  } catch (err) {
+    if (err.code === 'TERMS_NOT_ACCEPTED') {
+      return {
+        status: 'terms_required',
+        message: err.message,
+      };
+    }
+    if (err.status === 401) return { status: 'invalid' };
+    if (err.status === 429) throw err;
+    throw new Error(err.message || 'Không thể kết nối đến máy chủ xác thực.');
+  }
+
+  if (response.status === 423 || response.data?.status === 'locked') {
+    clearAuthToken();
+    return { status: 'locked' };
+  }
+
+  if (response.status !== 200 || !response.data?.token || !response.data?.account) {
+    return { status: 'invalid' };
+  }
+
+  const { token, account, homeSection } = response.data;
+  setAuthToken(token);
+  setClientIdentity(account);
+
+  // Nạp đồng thời dữ liệu Quản trị/Công việc, Đơn hàng PO và Tài chính đã cô lập quyền từ Backend
+  const [directory, ordersPayload, financeState] = await Promise.all([
+    fetchBootstrapApi(),
+    fetchOrdersApi().catch(() => ({ items: [] })),
+    fetchFinanceStateApi().catch(() => null),
+  ]);
+
+  return {
+    status: 'authenticated',
+    token,
+    account,
+    homeSection,
+    directory,
+    orders: ordersPayload?.items || [],
+    finance: financeState,
+  };
 }
 
-export async function authenticateMockAccount(email, password) {
-  const result = await attemptMockSignIn(email, password);
+export async function authenticateMockAccount(email, password, acceptedTerms = true) {
+  const result = await attemptMockSignIn(email, password, acceptedTerms);
   return result.account ?? null;
 }
 
-export async function changeMockPassword(accountId, currentPassword, newPassword) {
-  const directory = readDirectory();
-  const account = directoryProfiles(directory).find(item => item.id === accountId && item.status === 'active');
-  if (!account) return 'Tài khoản không khả dụng.';
-  if (!validNewPassword(newPassword)) return 'Mật khẩu mới phải có từ 8 đến 128 ký tự.';
-  if (typeof currentPassword !== 'string' || !currentPassword || currentPassword.length > 128) return 'Mật khẩu hiện tại không hợp lệ.';
-  const storage = globalThis.localStorage;
-  if (!storage || !globalThis.crypto?.subtle) return 'Đổi mật khẩu thử nghiệm cần trình duyệt hỗ trợ lưu trữ trên HTTPS hoặc localhost.';
-  const key = passwordKey(account.id);
-  const saved = storage.getItem(key);
-  if (!await matchesPassword(MOCK_ACCOUNTS.find(item => item.id === account.id) || {}, currentPassword, saved ?? directory.credentials[account.id] ?? null)) return 'Mật khẩu hiện tại không đúng.';
-  if (currentPassword === newPassword) return 'Mật khẩu mới phải khác mật khẩu hiện tại.';
-  const record = await createPasswordRecord(newPassword);
-  if (storage.getItem(key) !== saved) return 'Mật khẩu vừa được thay đổi. Vui lòng nhập lại mật khẩu hiện tại.';
-  storage.setItem(key, record);
-  return null;
+/**
+ * Đổi mật khẩu cá nhân trực tiếp qua Backend API (/api/v1/auth/change-password).
+ */
+export async function changeMockPassword(_accountId, currentPassword, newPassword) {
+  if (typeof newPassword !== 'string' || newPassword.trim().length < 8 || newPassword.length > 128) {
+    return 'Mật khẩu mới phải có từ 8 đến 128 ký tự.';
+  }
+  if (typeof currentPassword !== 'string' || !currentPassword || currentPassword.length > 128) {
+    return 'Mật khẩu hiện tại không hợp lệ.';
+  }
+  try {
+    await changePasswordApi(currentPassword, newPassword);
+    return null;
+  } catch (err) {
+    return err.message || 'Không thể đổi mật khẩu. Vui lòng thử lại.';
+  }
 }

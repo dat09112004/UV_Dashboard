@@ -1,6 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Download, Plus, Save, Trash2, Upload, FilePlus2, RefreshCw } from 'lucide-react';
 import { locale, phrase, t } from '../../locales/i18n.js';
+import { useDebouncedValue } from '../../hooks/useDebounce.js';
+import { useProgressivePagination } from '../../hooks/useProgressivePagination.js';
+import ProgressivePaginationBar from '../../components/common/ProgressivePaginationBar.jsx';
+import { releasePageCacheApi } from '../../services/api.js';
 import { businessToday, dateInputValue, parseBusinessDate } from '../../utils/business.js';
 import { formatQuantity } from '../../utils/orderFulfillment.js';
 import { computeProjectedProgress } from '../../utils/workspaceUi.js';
@@ -325,6 +329,7 @@ export default function DataEntryPage({ actor, data, onSave }) {
   const [editing, setEditing] = useState(() => Boolean(draft.sheets[selectedId]));
   const [temporary, setTemporary] = useState(() => entryDraftIsTemporary(actor.id) && Object.keys(draft.sheets).length > 0);
   const [query, setQuery] = useState('');
+  const debouncedQuery = useDebouncedValue(query, 300);
   const [pending, setPending] = useState(false);
   const [issues, setIssues] = useState([]);
   const [warnings, setWarnings] = useState([]);
@@ -344,16 +349,29 @@ export default function DataEntryPage({ actor, data, onSave }) {
     return () => window.removeEventListener('beforeunload', warn);
   }, [temporary]);
 
+  const writable = sheet ? canWriteSheet(actor, sheet) : false;
+  const canEdit = writable && editing;
+  const rows = sheet ? draft.sheets[sheet.id] || [blankRow()] : [blankRow()];
+  const canEditExisting = Boolean(sheet && writable && !canEdit && sheet.id === 'orders');
+  const columns = sheet ? (canEdit ? sheet.columns : [...sheet.columns, ...(sheet.extra || [])]) : [];
+  const requiredCols = new Set(sheet ? REQUIRED_BY_SHEET[sheet.id] || [] : []);
+  const existing = sheet
+    ? readEntryRows(sheet, actor, data).filter(row => !debouncedQuery ||
+        columns.some(col => String(row[col.key] ?? '').toLowerCase().includes(debouncedQuery.trim().toLowerCase())))
+    : [];
+
+  // Phân trang & tải trước 1 phần + tải dần khi lướt xuống cho bảng dữ liệu hiện có
+  const pagination = useProgressivePagination(existing, {
+    sectionKey: `data-entry-${sheet?.id || 'none'}`,
+    initialChunkSize: 8,
+    stepSize: 8,
+    pageSize: 16,
+    resetDeps: [sheet?.id, debouncedQuery, existing.length],
+  });
+  const pagedExisting = pagination.visibleItems;
+
   if (!sheet) return <section className="analytics-card management-panel"><h2>{t('Nhập liệu Excel')}</h2><p>{t('Bạn chưa được cấp quyền xem bảng dữ liệu nào.')}</p></section>;
 
-  const writable = canWriteSheet(actor, sheet);
-  const canEdit = writable && editing;
-  const rows = draft.sheets[sheet.id] || [blankRow()];
-  const canEditExisting = writable && !canEdit && sheet.id === 'orders';
-  const columns = canEdit ? sheet.columns : [...sheet.columns, ...(sheet.extra || [])];
-  const requiredCols = new Set(REQUIRED_BY_SHEET[sheet.id] || []);
-  const existing = readEntryRows(sheet, actor, data).filter(row => !query ||
-    columns.some(col => String(row[col.key] ?? '').toLowerCase().includes(query.trim().toLowerCase())));
   const setRows = rows => {
     const next = { ...draft, sheets: { ...draft.sheets } };
     const hasDraft = rows.some(hasValues);
@@ -467,7 +485,16 @@ export default function DataEntryPage({ actor, data, onSave }) {
       <p>{t('Chọn bảng, dùng biểu mẫu gọn theo từng việc hoặc tải Excel vào bản nháp để kiểm tra trước khi lưu.')}</p></div></div>
     <nav className="workflow-filter-tabs entry-tabs" aria-label={t('Bảng dữ liệu')}>
       {sheets.map(item => <button type="button" key={item.id} aria-pressed={item.id === sheet.id} disabled={pending}
-        onClick={() => { setSelectedId(item.id); setImportFile(null); setQuickMode(null); setQuery(''); clearFeedback(); }}>{t(item.label)}</button>)}
+        onClick={() => {
+          if (item.id !== sheet.id) {
+            releasePageCacheApi({ previousSection: 'data-entry', previousPage: pagination.currentPage });
+          }
+          setSelectedId(item.id);
+          setImportFile(null);
+          setQuickMode(null);
+          setQuery('');
+          clearFeedback();
+        }}>{t(item.label)}</button>)}
     </nav>
     <div className="entry-toolbar">
       <button className="row-detail-button" type="button" aria-pressed={!canEdit && !quickMode} disabled={pending} onClick={() => { setEditing(false); setQuickMode(null); clearFeedback(); }}>{t('Dữ liệu hiện có')}</button>
@@ -545,13 +572,14 @@ export default function DataEntryPage({ actor, data, onSave }) {
           </td>)}
           <td><button className="row-detail-button" type="button" disabled={pending} aria-label={t('Xóa dòng bản nháp')}
             onClick={() => { setRows(rows.length > 1 ? rows.filter((_, i) => i !== index) : [blankRow()]); clearFeedback(); }}><Trash2 size={15} /></button></td>
-        </tr>) : existing.map((row, index) => <tr key={row.id || row.rowId || index}><th scope="row">{index + 1}</th>
+        </tr>) : pagedExisting.map((row, index) => <tr key={row.id || row.rowId || index}><th scope="row">{pagination.pageStartIndex + index + 1}</th>
           {canEditExisting && <td><button className="row-detail-button" type="button" disabled={pending} onClick={() => editOrder(row)}>{t('Sửa tiến độ')}</button></td>}
           {columns.map(col => <td key={col.key}>{row[col.key] === null || row[col.key] === undefined || row[col.key] === '' ? '—' : typeof row[col.key] === 'boolean' ? t(row[col.key] ? 'Có' : 'Không') : t(String(row[col.key]))}</td>)}
         </tr>)}
       </tbody></table>
       {!canEdit && existing.length === 0 && <p className="management-note">{t('Không có dữ liệu theo bộ lọc')}</p>}
     </div>
+    {!canEdit && existing.length > 0 && <ProgressivePaginationBar pagination={pagination} itemUnit="dòng dữ liệu" />}
     {canEdit && <div className="entry-footer">
       <span>{phrase('§ dòng trong bản nháp', rows.filter(hasValues).length)}</span>
       <button type="button" className="row-detail-button" disabled={pending || rows.length >= MAX_ENTRY_ROWS} onClick={() => setRows([...rows, blankRow()])}><Plus size={15} />{t('Thêm dòng')}</button>

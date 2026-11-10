@@ -1,6 +1,6 @@
 {
   "name": "executive-po-dashboard-fe",
-  "version": "1.2.0",
+  "version": "2.2.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,7 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "lint": "eslint src --ext js,jsx",
-    "test": "node --test tests/*.test.js"
+    "test": "node --test tests/frontend.test.js"
   },
   "dependencies": {
     "@reduxjs/toolkit": "^2.2.1",

@@ -1,24 +1,32 @@
-import { AlertAssignmentLine } from './components/common/index.js';
+import { AlertAssignmentLine, ProgressivePaginationBar } from './components/common/index.js';
 import LanguageSwitch from './locales/LanguageSwitch.jsx';
 import { localizeInvalidInput, clearLocalizedValidation } from './locales/formValidation.js';
 import { t, locale, getLanguage, subscribeLanguage, phrase, translate } from './locales/i18n.js';
 import React, { useState, useMemo, useEffect, useRef, useSyncExternalStore } from 'react';
 import {
   Search, CheckCircle2, ChevronRight, Eye, X, Lock, ArrowRight, Flame,
-  EyeOff, Maximize2, Minimize2, ArrowLeft, Download, RotateCcw, CalendarDays, AlertTriangle
+  EyeOff, Maximize2, Minimize2, ArrowLeft, Download, RotateCcw, CalendarDays, AlertTriangle, ShieldCheck
 } from 'lucide-react';
 
+import { useDebouncedValue } from './hooks/useDebounce.js';
+import { useProgressivePagination } from './hooks/useProgressivePagination.js';
 import { can, canOpenSection, homeSection, isExecutiveRole } from './utils/roles.js';
-import { DIRECTORY_KEY, directoryProfiles, readDirectory, saveDirectoryAction, taskWorkspace } from './features/users/services/demoDirectory.js';
+import { createEmptyDirectoryState, directoryProfiles, saveDirectoryAction, taskWorkspace } from './features/users/services/demoDirectory.js';
 import AccountsPage from './features/users/components/AccountsPage.jsx';
 import { canAssignTasks, isTaskEmployee, REMINDER_PENDING } from './features/operations/services/taskWorkflow.js';
 import DataEntryPage from './features/dataEntry/DataEntryPage.jsx';
 import { saveEntryBatch } from './features/dataEntry/service.js';
 import TasksPage from './features/operations/components/TasksPage.jsx';
 import RemindersPage from './features/operations/components/RemindersPage.jsx';
-import { BM41_OPENING_DATE, BM41_REPORT_DATE } from './mock/bm41.js';
-import { DEMO_ORDERS, DEMO_FINANCE_BASE, DEMO_FINANCE_KEY, DEMO_TRACKING_KEY } from './mock/bm41Scenarios.js';
 import { attemptMockSignIn } from './features/auth/services/mockAuth.js';
+import {
+  abortAllPageRequests,
+  createPageAbortSignal,
+  executeFinanceActionApi,
+  logoutApi,
+  releasePageCacheApi,
+  updateOrderProgressApi,
+} from './services/api.js';
 import AppHeader, { NAV_ITEMS } from './components/layout/AppHeader.jsx';
 import DashboardOverview, { OverviewKpis, AttentionSummary, EmployeeAlertReminder } from './components/dashboard/DashboardOverview.jsx';
 import { CategoryProgressChart, RevenueChart, RevenueTaxProfitabilityPanel } from './components/dashboard/DashboardCharts.jsx';
@@ -32,14 +40,15 @@ import DebtDetailPanel from './components/finance/DebtDetailPanel.jsx';
 import { getRoleLayout, presentAlert } from './utils/dashboardPresentation.js';
 import { alertDestination, payableAction } from './utils/workspaceUi.js';
 import { InvoiceForm, ReceiptWorkspace, PayableForm, SplitPayableForm, FinanceHistory } from './components/finance/FinanceForms.jsx';
-import { loadFinanceState, saveFinanceState, unallocatedTotal, recordInvoice, saveReceipt, allocateReceipt, submitPayable, splitPayable, reviewPayable, recordPayablePayment, payableWorkflowStatus, itemFinancialSummary, businessToday, AP_REVIEW, AP_PENDING, AP_APPROVED, AP_RETURNED, AP_SPLIT_REQUIRED } from './utils/financeWorkflow.js';
+import { initialFinanceState, unallocatedTotal, payableWorkflowStatus, itemFinancialSummary, businessToday, AP_REVIEW, AP_PENDING, AP_APPROVED, AP_RETURNED, AP_SPLIT_REQUIRED } from './utils/financeWorkflow.js';
 import { setClientIdentity } from './utils/permissions.js';
-import { loadTrackedItems, saveTrackedItem, updateProgressRecord, getFulfillment, formatPercent } from './utils/orderFulfillment.js';
+import { loadTrackedItems, getFulfillment, formatPercent } from './utils/orderFulfillment.js';
 const BRAND_LOGO = '/logo.png';
 const LOCKED_ACCOUNT_MESSAGE = 'Tài khoản đã bị khóa. Vui lòng liên hệ quản trị viên để mở khóa.';
+const TERMS_REQUIRED_MESSAGE = 'Vui lòng tích chọn đồng ý Chính sách bảo mật và Điều khoản sử dụng trước khi đăng nhập.';
 const matchesSearch = (value, query) => typeof value === 'string' &&
   (value.toLowerCase().includes(query) || translate(value, 'en').toLowerCase().includes(query));
-const readLocalDirectory = () => { try { return readDirectory(); } catch { return null; } };
+const createEmptyFinance = () => initialFinanceState([], [], [], businessToday(), { includeOpeningReceipt: false });
 const panelSection = panel => ({
   ITEM_DETAIL: 'orders', RECORD_REV: 'revenue', ALLOCATE_AR: 'receivables',
   SPLIT_AP: 'payables', SUBMIT_AP: 'payables', REVIEW_AP: 'payables', PAY_AP: 'payables',
@@ -70,14 +79,16 @@ export default function App() {
   const [loginPassword, setLoginPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [loginError, setLoginError] = useState('');
   const [loginNotice, setLoginNotice] = useState('');
   const [isSigningIn, setIsSigningIn] = useState(false);
   const loginLockDialog = useRef(null);
+  const termsPolicyDialog = useRef(null);
   const [forgotPasswordSent, setForgotPasswordSent] = useState(false);
 
   const [currentAccountId, setCurrentAccountId] = useState(null);
-  const [directory, setDirectory] = useState(readLocalDirectory);
+  const [directory, setDirectory] = useState(createEmptyDirectoryState);
   const accounts = useMemo(() => directoryProfiles(directory), [directory]);
   const currentUser = accounts.find(account => account.id === currentAccountId && account.status === 'active') || null;
   const currentRole = currentUser?.role;
@@ -89,6 +100,7 @@ export default function App() {
   const fullReport = showOrders && showRevenue && showReceivables && showPayables;
   const [selectedSection, setActiveSection] = useState('overview');
   const activeSection = canOpenSection(currentUser, selectedSection) ? selectedSection : homeSection(currentUser);
+  const previousSectionRef = useRef(activeSection);
   const reviewingResubmissions = activeSection === 'assignment-reviews';
   const [alertTaskDraft, setAlertTaskDraft] = useState(null);
   const [reminderDraft, setReminderDraft] = useState(null);
@@ -104,12 +116,6 @@ export default function App() {
   );
 
   useEffect(() => {
-    const refresh = event => { if (event.key === DIRECTORY_KEY || event.key === null) setDirectory(readLocalDirectory()); };
-    window.addEventListener('storage', refresh);
-    return () => window.removeEventListener('storage', refresh);
-  }, []);
-
-  useEffect(() => {
     setClientIdentity(currentUser);
     if (currentAccountId && !currentUser) {
       setCurrentAccountId(null);
@@ -117,27 +123,43 @@ export default function App() {
     }
   }, [currentUser, currentAccountId]);
 
+  // Khi người dùng bấm sang trang/phân hệ khác -> Hủy request trang cũ & giải phóng cache trang cũ trên máy chủ
+  useEffect(() => {
+    const prevSection = previousSectionRef.current;
+    if (prevSection && prevSection !== activeSection && isAuthenticated) {
+      createPageAbortSignal(prevSection);
+      releasePageCacheApi({ previousSection: prevSection });
+    }
+    previousSectionRef.current = activeSection;
+  }, [activeSection, isAuthenticated]);
+
   const [orderView, setOrderView] = useState('fulfillment');
   const [orderFilter, setOrderFilter] = useState('all');
-  const [reportDate, setReportDate] = useState(BM41_REPORT_DATE);
+  const [reportDate, setReportDate] = useState(() => businessToday());
   const [debtFilter, setDebtFilter] = useState('all');
   const [payableWorkflowFilter, setPayableWorkflowFilter] = useState('all');
   const [isExporting, setIsExporting] = useState(false);
 
-  // Filter States
+  // Filter States + Debounced Search & Filter States
   const [selectedCategory, setSelectedCategory] = useState('Tất cả ngành hàng');
   const [selectedOrigin, setSelectedOrigin] = useState('Tất cả xuất xứ');
   const [onlyMyRoleRedAlerts, setOnlyMyRoleRedAlerts] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Business Data States
-  const [vendorItems, setVendorItems] = useState(() => loadTrackedItems(DEMO_ORDERS, undefined, DEMO_TRACKING_KEY));
-  const [finance, setFinance] = useState(() => loadFinanceState(DEMO_FINANCE_BASE, undefined, DEMO_FINANCE_KEY));
+  const debouncedSearchQuery = useDebouncedValue(searchQuery, 300);
+  const debouncedCategory = useDebouncedValue(selectedCategory, 150);
+  const debouncedOrigin = useDebouncedValue(selectedOrigin, 150);
+  const debouncedDebtFilter = useDebouncedValue(debtFilter, 150);
+  const debouncedPayableWorkflowFilter = useDebouncedValue(payableWorkflowFilter, 150);
+  const debouncedOrderFilter = useDebouncedValue(orderFilter, 150);
+
+  // Business Data States (Loaded 100% from Backend API upon authentication — Zero Mock Data)
+  const [vendorItems, setVendorItems] = useState([]);
+  const [finance, setFinance] = useState(createEmptyFinance);
   const { revenue: revenueRecords, receivables, payables } = finance;
   const unallocatedCash = unallocatedTotal(finance);
 
   // Centered workspace dialog with optional full-screen mode.
-  // workspacePanel: { type: 'ITEM_DETAIL' | 'ALLOCATE_AR' | 'RECORD_REV', data: any } | null
   const [workspacePanel, setWorkspacePanel] = useState(null);
   const [isFullScreenPanel, setIsFullScreenPanel] = useState(false);
   useEffect(() => {
@@ -190,7 +212,7 @@ export default function App() {
       }
       const activeDialog = document.querySelector('[role="alertdialog"]') || dialog;
       if (event.key !== 'Tab' || !activeDialog) return;
-      const focusable = [...activeDialog.querySelectorAll('button, input, select, textarea, [tabindex="0"]')].filter(el => !el.disabled && el.getClientRects().length); 
+      const focusable = [...activeDialog.querySelectorAll('button, input, select, textarea, [tabindex="0"]')].filter(el => !el.disabled && el.getClientRects().length);
       const first = focusable[0], last = focusable[focusable.length - 1];
       if (!activeDialog.contains(document.activeElement)) { event.preventDefault(); first?.focus(); return; }
       if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
@@ -244,21 +266,29 @@ export default function App() {
     }
   };
 
-  // Handle Login Submit
+  // Handle Login Submit (Enforces mandatory Terms & Privacy Policy Checkbox)
   const handleLoginSubmit = async (e) => {
     e.preventDefault();
     if (isSigningIn) return;
     setLoginError('');
     setLoginNotice('');
+    if (!acceptedTerms) {
+      setLoginError(TERMS_REQUIRED_MESSAGE);
+      return;
+    }
     setIsSigningIn(true);
     let result;
     try {
-      result = await attemptMockSignIn(loginEmail, loginPassword);
-    } catch {
-      setLoginError('Không thể xác minh tài khoản trong trình duyệt này.');
+      result = await attemptMockSignIn(loginEmail, loginPassword, acceptedTerms);
+    } catch (err) {
+      setLoginError(err?.message || 'Không thể xác minh tài khoản trong trình duyệt này.');
       return;
     } finally {
       setIsSigningIn(false);
+    }
+    if (result.status === 'terms_required') {
+      setLoginError(result.message || TERMS_REQUIRED_MESSAGE);
+      return;
     }
     if (result.status === 'locked') {
       setLoginError(LOCKED_ACCOUNT_MESSAGE);
@@ -277,52 +307,55 @@ export default function App() {
       if (rememberMe) localStorage.setItem('uv-remembered-email', matched.email);
       else localStorage.removeItem('uv-remembered-email');
     } catch { /* Storage may be unavailable in private browsing. */ }
-    setDirectory(readLocalDirectory());
+    if (result.directory) setDirectory(result.directory);
+    if (Array.isArray(result.orders)) setVendorItems(loadTrackedItems(result.orders));
+    if (result.finance) setFinance(result.finance);
+    if (result.finance?.reportDate) setReportDate(result.finance.reportDate);
     setCurrentAccountId(matched.id);
-    setActiveSection(homeSection(matched));
+    setActiveSection(result.homeSection || homeSection(matched));
     setLoginError('');
     setIsAuthenticated(true);
     setLoginPassword('');
     setForgotPasswordSent(false);
-    const issue = can(matched, 'dashboard.read') ? finance.loadIssue : null;
-    showToast(issue || `Đăng nhập thành công với vai trò: ${matched.title}`, issue ? 'error' : 'info');
+    showToast(`Đăng nhập thành công với vai trò: ${matched.title}`, 'info');
   };
 
   const classifiedItems = useMemo(() => showOrders ? vendorItems.map(row => classifyProgress(row, reportDate)) : [], [showOrders, vendorItems, reportDate]);
   const classifiedAr = useMemo(() => showReceivables ? receivables.map(row => classifyDebt(row, reportDate)) : [], [showReceivables, receivables, reportDate]);
   const classifiedAp = useMemo(() => showPayables ? payables.map(row => classifyDebt(row, reportDate)) : [], [showPayables, payables, reportDate]);
+
   const sortedVendorItems = useMemo(() => classifiedItems.filter(item => {
-    const q = searchQuery.trim().toLowerCase();
-    return (selectedCategory === 'Tất cả ngành hàng' || item.category === selectedCategory) &&
-      matchesOrigin(item, selectedOrigin, vendorItems) &&
+    const q = debouncedSearchQuery.trim().toLowerCase();
+    return (debouncedCategory === 'Tất cả ngành hàng' || item.category === debouncedCategory) &&
+      matchesOrigin(item, debouncedOrigin, vendorItems) &&
       (!onlyMyRoleRedAlerts || item.priorityRank === 0) &&
       (!q || [item.poId, item.vendorNo, item.vendorName, item.vendorItemNo, item.category].some(value => matchesSearch(value, q)));
   }).sort(comparePriority),
-  [classifiedItems, selectedCategory, selectedOrigin, vendorItems, onlyMyRoleRedAlerts, searchQuery]);
+  [classifiedItems, debouncedCategory, debouncedOrigin, vendorItems, onlyMyRoleRedAlerts, debouncedSearchQuery]);
 
   const sortedRevenueRecords = useMemo(() => (showRevenue ? revenueRecords : []).filter(row => {
-    const q = searchQuery.trim().toLowerCase();
-    return (selectedCategory === 'Tất cả ngành hàng' || row.category === selectedCategory) &&
-      matchesOrigin(row, selectedOrigin, vendorItems) && (!onlyMyRoleRedAlerts || row.priorityRank === 0) &&
+    const q = debouncedSearchQuery.trim().toLowerCase();
+    return (debouncedCategory === 'Tất cả ngành hàng' || row.category === debouncedCategory) &&
+      matchesOrigin(row, debouncedOrigin, vendorItems) && (!onlyMyRoleRedAlerts || row.priorityRank === 0) &&
       (!q || [row.docNo, row.poId, row.sku, row.customerName, row.vendorName].some(value => matchesSearch(value, q)));
   }).sort((a, b) => a.priorityRank - b.priorityRank),
-  [showRevenue, revenueRecords, selectedCategory, selectedOrigin, vendorItems, onlyMyRoleRedAlerts, searchQuery]);
+  [showRevenue, revenueRecords, debouncedCategory, debouncedOrigin, vendorItems, onlyMyRoleRedAlerts, debouncedSearchQuery]);
 
   const sortedReceivables = useMemo(() => classifiedAr.filter(row => {
-    const q = searchQuery.trim().toLowerCase();
-    return (selectedCategory === 'Tất cả ngành hàng' || row.category === selectedCategory) &&
-      matchesOrigin(row, selectedOrigin, vendorItems) && (!onlyMyRoleRedAlerts || row.priorityRank === 0) &&
+    const q = debouncedSearchQuery.trim().toLowerCase();
+    return (debouncedCategory === 'Tất cả ngành hàng' || row.category === debouncedCategory) &&
+      matchesOrigin(row, debouncedOrigin, vendorItems) && (!onlyMyRoleRedAlerts || row.priorityRank === 0) &&
       (!q || [row.docNo, row.poId, row.sku, row.customerName, row.vendorRef].some(value => matchesSearch(value, q)));
   }).sort(comparePriority),
-  [classifiedAr, selectedCategory, selectedOrigin, vendorItems, onlyMyRoleRedAlerts, searchQuery]);
+  [classifiedAr, debouncedCategory, debouncedOrigin, vendorItems, onlyMyRoleRedAlerts, debouncedSearchQuery]);
 
   const sortedPayables = useMemo(() => classifiedAp.filter(row => {
-    const q = searchQuery.trim().toLowerCase();
-    return (selectedCategory === 'Tất cả ngành hàng' || row.category === selectedCategory) &&
-      matchesOrigin(row, selectedOrigin, vendorItems) && (!onlyMyRoleRedAlerts || row.priorityRank === 0) &&
+    const q = debouncedSearchQuery.trim().toLowerCase();
+    return (debouncedCategory === 'Tất cả ngành hàng' || row.category === debouncedCategory) &&
+      matchesOrigin(row, debouncedOrigin, vendorItems) && (!onlyMyRoleRedAlerts || row.priorityRank === 0) &&
       (!q || [row.docNo, row.poId, row.sku, row.supplierName, row.vendorNo].some(value => matchesSearch(value, q)));
   }).sort(comparePriority),
-  [classifiedAp, selectedCategory, selectedOrigin, vendorItems, onlyMyRoleRedAlerts, searchQuery]);
+  [classifiedAp, debouncedCategory, debouncedOrigin, vendorItems, onlyMyRoleRedAlerts, debouncedSearchQuery]);
 
   const orderCategories = useMemo(() => [...new Set([...classifiedItems, ...classifiedAr, ...classifiedAp,
     ...(showRevenue ? revenueRecords : [])].map(row => row.category).filter(Boolean))],
@@ -334,16 +367,51 @@ export default function App() {
   const arSummary = useMemo(() => debtSummary(sortedReceivables), [sortedReceivables]);
   const apSummary = useMemo(() => debtSummary(sortedPayables), [sortedPayables]);
   const alerts = useMemo(() => buildAlertQueue(sortedVendorItems, sortedReceivables, sortedPayables, { includeWarnings: true }), [sortedVendorItems, sortedReceivables, sortedPayables]);
-  const tableReceivables = sortedReceivables.filter(row => activeSection !== 'receivables' || debtMatchesFilter(row, debtFilter));
-  const payableScope = sortedPayables.filter(row => payableWorkflowFilter === 'all' || payableWorkflowStatus(row) === payableWorkflowFilter);
-  const tablePayables = activeSection === 'payables' ? payableScope.filter(row => debtMatchesFilter(row, debtFilter)) : sortedPayables; 
+  const tableReceivables = sortedReceivables.filter(row => activeSection !== 'receivables' || debtMatchesFilter(row, debouncedDebtFilter));
+  const payableScope = sortedPayables.filter(row => debouncedPayableWorkflowFilter === 'all' || payableWorkflowStatus(row) === debouncedPayableWorkflowFilter);
+  const tablePayables = activeSection === 'payables' ? payableScope.filter(row => debtMatchesFilter(row, debouncedDebtFilter)) : sortedPayables;
   const monthlyData = useMemo(() => monthlyRevenueSeries(sortedRevenueRecords), [sortedRevenueRecords]);
+
+  // Phân trang + Tải trước 1 phần & Cuộn tải dần cho 4 bảng điều hành chính
+  const productionPagination = useProgressivePagination(sortedVendorItems, {
+    sectionKey: 'orders-production',
+    initialChunkSize: 5,
+    stepSize: 5,
+    pageSize: 10,
+    resetDeps: [debouncedCategory, debouncedOrigin, debouncedSearchQuery, onlyMyRoleRedAlerts, reportDate],
+  });
+  const revenuePagination = useProgressivePagination(sortedRevenueRecords, {
+    sectionKey: 'revenue',
+    initialChunkSize: 5,
+    stepSize: 5,
+    pageSize: 10,
+    resetDeps: [debouncedCategory, debouncedOrigin, debouncedSearchQuery, onlyMyRoleRedAlerts, reportDate],
+  });
+  const arPagination = useProgressivePagination(tableReceivables, {
+    sectionKey: 'receivables',
+    initialChunkSize: 5,
+    stepSize: 5,
+    pageSize: 10,
+    resetDeps: [debouncedCategory, debouncedOrigin, debouncedSearchQuery, debouncedDebtFilter, onlyMyRoleRedAlerts, reportDate],
+  });
+  const apPagination = useProgressivePagination(tablePayables, {
+    sectionKey: 'payables',
+    initialChunkSize: 5,
+    stepSize: 5,
+    pageSize: 10,
+    resetDeps: [debouncedCategory, debouncedOrigin, debouncedSearchQuery, debouncedDebtFilter, debouncedPayableWorkflowFilter, onlyMyRoleRedAlerts, reportDate],
+  });
+
   const onNavigate = (section, filter = 'all', query) => {
     if (entrySaving.current) {
       showToast('Đang lưu dữ liệu. Vui lòng chờ.');
       return;
     }
     if (!canOpenSection(currentUser, section)) return;
+    if (section !== activeSection) {
+      createPageAbortSignal(activeSection);
+      releasePageCacheApi({ previousSection: activeSection });
+    }
     setAlertTaskDraft(null);
     setActiveSection(section);
     if (section === 'orders') {
@@ -407,7 +475,7 @@ export default function App() {
           receivedPct: getFulfillment(item, reportDate).receivedPct, deliveredPct: getFulfillment(item, reportDate).deliveredPct,
           expectedReceiptDate: item.expectedReceiptDate, expectedDeliveryDate: item.etaDate, actualDeliveryDate: item.actualDeliveryDate,
           fulfillmentStatus: getFulfillment(item, reportDate).label })) },
-        { 'Nguồn dữ liệu': 'BM41 và giao dịch mô phỏng', 'Ngày theo dõi': formatDate(reportDate), 'Ngành hàng': selectedCategory, 'Xuất xứ': selectedOrigin, 'Tìm kiếm': searchQuery || t('Tất cả'), 'Chỉ báo động đỏ': onlyMyRoleRedAlerts ? 'Có' : 'Không', 'Sổ thu chi và nhật ký': 'Toàn bộ giao dịch trên máy, không áp dụng bộ lọc PO', 'Phân hệ': activeSection, 'Nhóm công nợ': ['receivables', 'payables'].includes(activeSection) ? debtFilter : 'all' }, language);
+        { 'Nguồn dữ liệu': 'BM41 và giao dịch mô phỏng', 'Ngày theo dõi': formatDate(reportDate), 'Ngành hàng': selectedCategory, 'Xuất xứ': selectedOrigin, 'Tìm kiếm': debouncedSearchQuery || t('Tất cả'), 'Chỉ báo động đỏ': onlyMyRoleRedAlerts ? 'Có' : 'Không', 'Sổ thu chi và nhật ký': 'Toàn bộ giao dịch trên máy, không áp dụng bộ lọc PO', 'Phân hệ': activeSection, 'Nhóm công nợ': ['receivables', 'payables'].includes(activeSection) ? debtFilter : 'all' }, language);
       showToast('Đã xuất báo cáo Excel.');
     } catch { showToast('Không thể xuất báo cáo. Vui lòng thử lại.', 'error'); }
     finally { setIsExporting(false); }
@@ -426,7 +494,7 @@ export default function App() {
     }
   };
 
-  // Update production and cumulative receipt/delivery quantities.
+  // Update production and cumulative receipt/delivery quantities via Backend RESTful API.
   const handleUpdateItemProgress = async (e) => {
     e.preventDefault();
     if (!canUpdateProgress || workspacePanel?.type !== 'ITEM_DETAIL' || workspaceSavingRef.current) return;
@@ -435,7 +503,12 @@ export default function App() {
     setIsSavingWorkspace(true);
     try {
       const target = workspacePanel.data;
-      const updated = await saveTrackedItem(updateProgressRecord(target, currentUser, values, businessToday()), undefined, DEMO_TRACKING_KEY);
+      const res = await updateOrderProgressApi(target.rowId, {
+        ...values,
+        reportDate,
+        expectedTrackingVersion: target.trackingVersion ?? null,
+      });
+      const updated = res.item;
       setVendorItems(prev => prev.map(row => row.rowId === updated.rowId ? updated : row));
       setWorkspaceDirty(false); setWorkspaceError('');
       setWorkspacePanel({ type: 'ITEM_DETAIL', data: classifyProgress(updated, reportDate) });
@@ -449,15 +522,12 @@ export default function App() {
     workspaceSavingRef.current = true;
     setIsSavingWorkspace(true);
     try {
-      const next = action === 'invoice' ? recordInvoice(finance, currentUser, payload, vendorItems) :
-        action === 'receipt' ? saveReceipt(finance, currentUser, payload) :
-        action === 'allocate' ? allocateReceipt(finance, currentUser, payload) :
-        action === 'submit' ? submitPayable(finance, currentUser, payload) :
-        action === 'split' ? splitPayable(finance, currentUser, payload, vendorItems) :
-        action === 'review' ? reviewPayable(finance, currentUser, payload) :
-        action === 'pay' ? recordPayablePayment(finance, currentUser, payload) : null;
-      if (!next) throw new Error('Thao tác không hợp lệ.');
-      await saveFinanceState(next, undefined, DEMO_FINANCE_KEY);
+      const apiRes = await executeFinanceActionApi(action, {
+        ...payload,
+        expectedRevision: finance.revision,
+      });
+      const next = apiRes.finance;
+      if (!next) throw new Error('Không nhận được trạng thái tài chính mới từ máy chủ.');
       setFinance(next);
       if (action === 'split' && payableWorkflowFilter === AP_SPLIT_REQUIRED) setPayableWorkflowFilter(AP_REVIEW);
       setWorkspaceDirty(false); setWorkspaceError('');
@@ -494,19 +564,23 @@ export default function App() {
       showToast('Đang lưu dữ liệu. Vui lòng chờ.');
       return;
     }
+    abortAllPageRequests();
+    logoutApi();
     setAlertTaskDraft(null);
     setReminderDraft(null);
     setPayableWorkflowFilter('all');
     setIsAuthenticated(false);
     setCurrentAccountId(null);
-    setClientIdentity(null);
+    setVendorItems([]);
+    setFinance(createEmptyFinance());
+    setDirectory(createEmptyDirectoryState());
     setSearchQuery('');
     setSelectedCategory('Tất cả ngành hàng');
     setSelectedOrigin('Tất cả xuất xứ');
     setOnlyMyRoleRedAlerts(false);
     setDebtFilter('all');
     setOrderFilter('all');
-    setReportDate(BM41_REPORT_DATE);
+    setReportDate(businessToday());
     setLoginPassword('');
     setLoginError('');
     setLoginNotice('');
@@ -561,10 +635,40 @@ export default function App() {
                   onChange={e => setRememberMe(e.target.checked)} />{t("Ghi nhớ email")}</label>
                 <button type="button" onClick={() => setForgotPasswordSent(true)}>{t("Quên mật khẩu?")}</button>
               </div>
+              <div className="login-terms-box rounded-lg border border-slate-200 bg-slate-50/80 p-3 text-xs text-slate-700 space-y-1.5">
+                <label htmlFor="login-accept-terms" className="flex items-start gap-2 cursor-pointer font-medium text-slate-800">
+                  <input
+                    id="login-accept-terms"
+                    name="acceptedTerms"
+                    type="checkbox"
+                    checked={acceptedTerms}
+                    onChange={e => {
+                      setAcceptedTerms(e.target.checked);
+                      if (e.target.checked && loginError === TERMS_REQUIRED_MESSAGE) {
+                        setLoginError('');
+                      }
+                    }}
+                    className="mt-0.5 shrink-0"
+                  />
+                  <span>
+                    {t("Tôi đã đọc và đồng ý với Chính sách bảo mật và Điều khoản sử dụng hệ thống")}
+                    <span className="text-rose-600 font-bold" aria-hidden="true"> *</span>
+                  </span>
+                </label>
+                <div className="pl-5">
+                  <button
+                    type="button"
+                    onClick={() => termsPolicyDialog.current?.showModal()}
+                    className="text-sky-700 hover:text-sky-900 underline font-semibold cursor-pointer text-[11px]"
+                  >
+                    {t("Xem chi tiết Chính sách bảo mật & Điều khoản sử dụng")}
+                  </button>
+                </div>
+              </div>
               <button type="submit" className="login-submit" disabled={isSigningIn}>{t(isSigningIn ? 'Đang đăng nhập…' : 'Đăng nhập')} <ArrowRight size={18} /></button>
             </form>
           </section>
-          </main>
+        </main>
         <dialog className="account-confirm-dialog login-lock-dialog" ref={loginLockDialog}
           aria-labelledby="login-lock-title" aria-describedby="login-lock-description">
           <div className="login-lock-icon"><Lock size={24} aria-hidden="true" /></div>
@@ -574,12 +678,53 @@ export default function App() {
             <button type="submit" className="primary">{t('Đã hiểu')}</button>
           </form>
         </dialog>
+        <dialog
+          className="account-confirm-dialog terms-policy-dialog max-w-lg"
+          ref={termsPolicyDialog}
+          aria-labelledby="terms-policy-title"
+        >
+          <div className="flex items-center gap-2 text-slate-900 mb-2">
+            <ShieldCheck size={22} className="text-sky-700 shrink-0" />
+            <h2 id="terms-policy-title" className="m-0 text-base font-bold">
+              {t('Chính sách bảo mật & Điều khoản sử dụng')}
+            </h2>
+          </div>
+          <div className="text-xs text-slate-700 space-y-2.5 max-h-72 overflow-y-auto pr-1 leading-relaxed">
+            <p>
+              <strong>1. {t('Bảo mật dữ liệu kinh doanh & tài chính:')}</strong>{' '}
+              {t('Mọi thông tin đơn hàng mua (PO), đơn giá nhà cung cấp, chứng từ doanh thu, công nợ phải thu (AR) và công nợ phải trả (AP) là tài sản mật của Uyen Vu International. Nghiêm cấm sao chép hoặc chia sẻ trái phép ra ngoài phạm vi công việc.')}
+            </p>
+            <p>
+              <strong>2. {t('Phân quyền truy cập nghiêm ngặt (RBAC):')}</strong>{' '}
+              {t('Tài khoản chỉ được phép truy cập các phân hệ, chứng từ và tệp đính kèm đúng với vai trò được CEO hoặc Quản trị viên cấp phép. Không chia sẻ mật khẩu hoặc mã phiên đăng nhập JWT cho bất kỳ ai.')}
+            </p>
+            <p>
+              <strong>3. {t('Ghi vết kiểm toán & trách nhiệm giải trình:')}</strong>{' '}
+              {t('Mọi thao tác cập nhật tiến độ, lập hóa đơn, phân bổ tiền thu, tách chứng từ phải trả, duyệt chi và bàn giao công việc đều được lưu vết kiểm toán tự động theo giờ Việt Nam (Asia/Ho_Chi_Minh).')}
+            </p>
+          </div>
+          <div className="workflow-footer mt-4">
+            <button type="button" onClick={() => termsPolicyDialog.current?.close()}>{t('Đóng')}</button>
+            <button
+              type="button"
+              className="primary"
+              onClick={() => {
+                setAcceptedTerms(true);
+                if (loginError === TERMS_REQUIRED_MESSAGE) setLoginError('');
+                termsPolicyDialog.current?.close();
+              }}
+            >
+              {t('Tôi đồng ý')}
+            </button>
+          </div>
+        </dialog>
         <footer className="login-footer">© {new Date().getFullYear()} Uyen Vu International</footer>
       </div>
     );
   }
 
   // ============================================================================
+  // RENDER AUTHENTICATED WORKSPACE
   // ============================================================================
   return (
     <div className="app-shell min-h-screen text-slate-800 font-sans antialiased flex flex-col" onInvalidCapture={localizeInvalidInput} onInputCapture={clearLocalizedValidation} onChangeCapture={clearLocalizedValidation}>
@@ -630,8 +775,8 @@ export default function App() {
             reReviewOnly={reviewingResubmissions} alertDraft={alertTaskDraft} onClearAlertDraft={() => setAlertTaskDraft(null)}
             onNavigate={onNavigate} onAction={handleDirectoryAction} busy={directoryBusy} /></>}
       </main> : <main className={`dashboard-workspace${activeSection === 'revenue' ? ' revenue-workspace' : ''}`}>
-        <div className="page-heading"><div><p className="page-eyebrow">UYEN VU INTERNATIONAL</p><h1>{t(activeSection === 'overview' ? 'Tổng quan điều hành' : NAV_ITEMS.find(item => item.id === activeSection)?.label)}</h1></div><div className="page-heading-actions"><label className="report-date">{t("Ngày theo dõi")}<span className="report-date-control"><span>{formatDate(reportDate)}</span><CalendarDays size={14} /><input lang={locale()} aria-label={t("Ngày theo dõi")} type="date" min={BM41_OPENING_DATE} value={reportDate} onChange={e => { if (parseBusinessDate(e.target.value) && e.target.value >= BM41_OPENING_DATE) setReportDate(e.target.value); }} /></span></label>{fullReport && <button className="export-button" onClick={handleExport} disabled={isExporting}><Download size={16} />{t(isExporting ? 'Đang xuất…' : 'Xuất báo cáo')}</button>}</div></div>
-        <p className="mt-2 text-xs text-slate-600">{t('Bản kiểm thử BM41 · Giữ 5 PO gốc. PO bổ sung, tiến độ và giao dịch tài chính là dữ liệu mô phỏng.')}</p>
+        <div className="page-heading"><div><p className="page-eyebrow">UYEN VU INTERNATIONAL</p><h1>{t(activeSection === 'overview' ? 'Tổng quan điều hành' : NAV_ITEMS.find(item => item.id === activeSection)?.label)}</h1></div><div className="page-heading-actions"><label className="report-date">{t("Ngày theo dõi")}<span className="report-date-control"><span>{formatDate(reportDate)}</span><CalendarDays size={14} /><input lang={locale()} aria-label={t("Ngày theo dõi")} type="date" min={finance.openingDate || '2020-01-01'} value={reportDate} onChange={e => { if (parseBusinessDate(e.target.value) && e.target.value >= (finance.openingDate || '2020-01-01')) setReportDate(e.target.value); }} /></span></label>{fullReport && <button className="export-button" onClick={handleExport} disabled={isExporting}><Download size={16} />{t(isExporting ? 'Đang xuất…' : 'Xuất báo cáo')}</button>}</div></div>
+        <p className="mt-2 text-xs text-slate-600">{t('Hệ thống Điều hành Uyen Vu International · Dữ liệu đồng bộ trực tiếp từ máy chủ PostgreSQL & Redis Cache.')}</p>
         
         <AttentionSummary
           activeSection={activeSection}
@@ -679,7 +824,7 @@ export default function App() {
           reportDate={reportDate} ar={arSummary} ap={apSummary} alerts={alerts} monthlyData={monthlyData} onNavigate={onNavigate} onOpenItem={openItem} onResetFilters={resetFilters} onOpenAlert={openWorkAlert}
           onAssignAlert={canAssignAlert ? assignWorkAlert : undefined} onRemindAlert={remindWorkAlert} tasks={allDirectoryTasks} accounts={accounts} reminders={allReminders} />}
         {activeSection === 'orders' && <div className="order-view-tabs" aria-label={t("Chế độ tiến độ đơn hàng")}><button aria-pressed={orderView === 'fulfillment'} onClick={() => setOrderView('fulfillment')}>{t("Nhập & giao hàng")}</button><button aria-pressed={orderView === 'production'} onClick={() => setOrderView('production')}>{t("Sản xuất & đóng gói")}</button></div>}
-        {activeSection === 'orders' && orderView === 'fulfillment' && <FulfillmentTable onResetFilters={resetFilters} items={sortedVendorItems} reportDate={reportDate} onOpenItem={openItem} selectedFilter={orderFilter} onFilterChange={setOrderFilter} tasks={allDirectoryTasks} accounts={accounts} reminders={allReminders} onRemindAlert={remindWorkAlert} />}
+        {activeSection === 'orders' && orderView === 'fulfillment' && <FulfillmentTable onResetFilters={resetFilters} items={sortedVendorItems} reportDate={reportDate} onOpenItem={openItem} selectedFilter={debouncedOrderFilter} onFilterChange={setOrderFilter} tasks={allDirectoryTasks} accounts={accounts} reminders={allReminders} onRemindAlert={remindWorkAlert} />}
         {activeSection === 'orders' && orderView === 'production' && (
           <section className="space-y-6">
             <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-2xs space-y-5">
@@ -756,7 +901,7 @@ export default function App() {
                   </thead>
                   <tbody className="divide-y divide-slate-200">
                     {!sortedVendorItems.length && <tr><td colSpan={14} className="empty-table">{t("Không có mã hàng phù hợp")}</td></tr>}
-                    {sortedVendorItems.map((row) => {
+                    {productionPagination.visibleItems.map((row) => {
                       const isRed = row.priorityRank === 0;
                       const alertObj = { id: `order-${row.rowId}`, type: 'orders', reference: row.poId, label: row.vendorItemNo, status: row.alertLabel, data: row };
                       return (
@@ -848,6 +993,7 @@ export default function App() {
                   </tbody>
                 </table>
               </div>
+              <ProgressivePaginationBar pagination={productionPagination} itemUnit="mã hàng" />
             </div>
           </section>
         )}
@@ -883,7 +1029,7 @@ export default function App() {
                   </thead>
                   <tbody className="divide-y divide-slate-200">
                     {!sortedRevenueRecords.length && <tr><td colSpan={6} className="empty-table">{t("Không có chứng từ doanh thu phù hợp")}</td></tr>}
-                    {sortedRevenueRecords.map(rev => {
+                    {revenuePagination.visibleItems.map(rev => {
                       const isRed = rev.priorityRank === 0;
                       const alertObj = { id: `receivables-${rev.id}`, type: 'receivables', reference: rev.docNo, label: rev.customerName, status: rev.alertLevel, data: rev };
                       return (
@@ -923,6 +1069,7 @@ export default function App() {
                   </tbody>
                 </table>
               </div>
+              <ProgressivePaginationBar pagination={revenuePagination} itemUnit="chứng từ doanh thu" />
             </div>
           </section>
         )}
@@ -943,7 +1090,7 @@ export default function App() {
             </div>
 
             <DebtStatusOverview rows={sortedReceivables} debtType="receivables" role={currentRole}
-              filter={debtFilter} onFilter={setDebtFilter} onOpen={openWorkspace}
+              filter={debouncedDebtFilter} onFilter={setDebtFilter} onOpen={openWorkspace}
               redOnly={onlyMyRoleRedAlerts} onClearRed={() => { setOnlyMyRoleRedAlerts(false); setDebtFilter('all'); }}
               tasks={allDirectoryTasks} accounts={accounts} reminders={allReminders} onRemindAlert={remindWorkAlert} />
             <div className="overflow-x-auto border border-slate-200 rounded-xl">
@@ -963,7 +1110,7 @@ export default function App() {
                 </thead>
                 <tbody className="divide-y divide-slate-200">
                   {!tableReceivables.length && <tr><td colSpan={10} className="empty-table">{t("Không có khoản phải thu phù hợp. ")}<button onClick={resetFilters}>{t("Xóa bộ lọc")}</button></td></tr>}
-                  {tableReceivables.map(ar => {
+                  {arPagination.visibleItems.map(ar => {
                     const isRed = ar.priorityRank === 0;
                     const alertObj = { id: `receivables-${ar.id}`, type: 'receivables', reference: ar.docNo, label: ar.customerName, status: ar.alertLabel, data: ar };
                     return (
@@ -1013,6 +1160,7 @@ export default function App() {
                 </tbody>
               </table>
             </div>
+            <ProgressivePaginationBar pagination={arPagination} itemUnit="khoản phải thu" />
           </section>
         )}
         {activeSection === 'payables' && (
@@ -1025,7 +1173,7 @@ export default function App() {
 
             <div className="workflow-filter-tabs" aria-label={t("Lọc quy trình chi")}>{[['all', 'Tất cả hồ sơ'], [AP_SPLIT_REQUIRED, AP_SPLIT_REQUIRED], [AP_PENDING, 'Chờ CEO duyệt'], [AP_APPROVED, 'Đã duyệt chi'], [AP_REVIEW, 'Cần lập đề nghị'], [AP_RETURNED, 'Cần bổ sung']].map(([value, label]) => <button key={value} aria-pressed={payableWorkflowFilter === value} onClick={() => setPayableWorkflowFilter(value)}>{t(label)}<span>{value === 'all' ? sortedPayables.length : sortedPayables.filter(row => payableWorkflowStatus(row) === value).length}</span></button>)}</div>
             <DebtStatusOverview rows={payableScope} debtType="payables" role={currentRole} canSplit={showOrders}
-              filter={debtFilter} onFilter={setDebtFilter} onOpen={openWorkspace}
+              filter={debouncedDebtFilter} onFilter={setDebtFilter} onOpen={openWorkspace}
               redOnly={onlyMyRoleRedAlerts} onClearRed={() => { setOnlyMyRoleRedAlerts(false); setDebtFilter('all'); }}
               tasks={allDirectoryTasks} accounts={accounts} reminders={allReminders} onRemindAlert={remindWorkAlert} />
             <div className="overflow-x-auto border border-slate-200 rounded-xl">
@@ -1045,7 +1193,7 @@ export default function App() {
                 </thead>
                 <tbody className="divide-y divide-slate-200">
                   {!tablePayables.length && <tr><td colSpan={9} className="empty-table">{t("Không có khoản phải trả phù hợp. ")}<button onClick={resetFilters}>{t("Xóa bộ lọc")}</button></td></tr>}
-                  {tablePayables.map(ap => {
+                  {apPagination.visibleItems.map(ap => {
                     const isRed = ap.priorityRank === 0;
                     const action = payableAction(ap, currentRole, showOrders);
                     const status = payableWorkflowStatus(ap);
@@ -1103,6 +1251,7 @@ export default function App() {
                 </tbody>
               </table>
             </div>
+            <ProgressivePaginationBar pagination={apPagination} itemUnit="khoản phải trả" />
           </section>
         )}
         </div>

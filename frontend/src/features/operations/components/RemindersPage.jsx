@@ -4,6 +4,8 @@ import {
   RotateCcw, Search, Send, UserCheck
 } from 'lucide-react';
 import { locale, phrase, t } from '../../../locales/i18n.js';
+import { useDebouncedValue } from '../../../hooks/useDebounce.js';
+import { useProgressivePagination } from '../../../hooks/useProgressivePagination.js';
 import { businessToday } from '../../../utils/business.js';
 import { isExecutiveRole } from '../../../utils/roles.js';
 import {
@@ -15,6 +17,7 @@ import {
   TASK_DEPARTMENTS,
 } from '../services/taskWorkflow.js';
 import AlertAssignmentLine from '../../../components/common/AlertAssignmentLine.jsx';
+import ProgressivePaginationBar from '../../../components/common/ProgressivePaginationBar.jsx';
 
 function QuickAssignBox({ reminder, people, today, busy, onQuickAssign, onDismiss }) {
   const [scope, setScope] = useState('person');
@@ -219,6 +222,12 @@ export default function RemindersPage({
   const [statusFilter, setStatusFilter] = useState('all');
   const [typeFilter, setTypeFilter] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Debounced search & filter values
+  const debouncedSearchQuery = useDebouncedValue(searchQuery, 300);
+  const debouncedStatusFilter = useDebouncedValue(statusFilter, 150);
+  const debouncedTypeFilter = useDebouncedValue(typeFilter, 150);
+
   const [showCreateForm, setShowCreateForm] = useState(Boolean(initialDraft));
   const [selectedAlertKey, setSelectedAlertKey] = useState(() => initialDraft?.alertId || '');
   const [customReference, setCustomReference] = useState(() => initialDraft?.reference || '');
@@ -285,10 +294,10 @@ export default function RemindersPage({
   }, [redAlerts, tasks, accounts, reminders, today]);
 
   const filteredReminders = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
+    const q = debouncedSearchQuery.trim().toLowerCase();
     return reminders.filter(rem => {
-      if (statusFilter !== 'all' && rem.status !== statusFilter) return false;
-      if (typeFilter !== 'all' && rem.alertType !== typeFilter) return false;
+      if (debouncedStatusFilter !== 'all' && rem.status !== debouncedStatusFilter) return false;
+      if (debouncedTypeFilter !== 'all' && rem.alertType !== debouncedTypeFilter) return false;
       if (q) {
         const hay = [
           rem.reference,
@@ -303,7 +312,17 @@ export default function RemindersPage({
       }
       return true;
     });
-  }, [reminders, statusFilter, typeFilter, searchQuery]);
+  }, [reminders, debouncedStatusFilter, debouncedTypeFilter, debouncedSearchQuery]);
+
+  // Phân trang + Tải trước 1 phần & Cuộn tải dần + Xóa trang cũ khi đổi trang/tab
+  const pagination = useProgressivePagination(filteredReminders, {
+    sectionKey: 'reminders',
+    initialChunkSize: 5,
+    stepSize: 5,
+    pageSize: 10,
+    resetDeps: [debouncedStatusFilter, debouncedTypeFilter, debouncedSearchQuery],
+  });
+  const pagedReminders = pagination.visibleItems;
 
   const formatTime = iso => {
     if (!iso) return '—';
@@ -358,7 +377,6 @@ export default function RemindersPage({
         </div>
       </header>
 
-      {/* Form Gửi Nhắc Việc */}
       {(showCreateForm || initialDraft) && (
         <section className="analytics-card bg-amber-50/60 border border-amber-300 p-5 rounded-xl space-y-4">
           <div className="flex items-center justify-between border-b border-amber-200 pb-3">
@@ -498,7 +516,6 @@ export default function RemindersPage({
         </section>
       )}
 
-      {/* Thống kê nhanh trạng thái nhắc việc & cảnh báo chưa giao */}
       <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
         <button
           type="button"
@@ -536,7 +553,6 @@ export default function RemindersPage({
         </div>
       </div>
 
-      {/* Danh sách nhắc việc */}
       <section className="analytics-card management-panel space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-200">
           <div>
@@ -587,7 +603,7 @@ export default function RemindersPage({
           </div>
         ) : (
           <div className="space-y-3">
-            {filteredReminders.map(reminder => {
+            {pagedReminders.map(reminder => {
               const alertRef = {
                 id: reminder.alertId,
                 type: reminder.alertType,
@@ -595,7 +611,7 @@ export default function RemindersPage({
               };
               const matchedAlert = alerts.find(a => a.id === reminder.alertId || a.reference === reminder.reference);
               const isPending = reminder.status === REMINDER_PENDING;
-              const isQuickOpen = expandedQuickAssignId === reminder.id || (isExec && isPending && expandedQuickAssignId === null && filteredReminders[0]?.id === reminder.id);
+              const isQuickOpen = expandedQuickAssignId === reminder.id || (isExec && isPending && expandedQuickAssignId === null && pagedReminders[0]?.id === reminder.id);
 
               return (
                 <article
@@ -624,7 +640,6 @@ export default function RemindersPage({
                         <AlertTriangle size={13} />
                         <span>{t(reminder.issue)}</span>
                       </p>
-                      {/* Dòng nhỏ & in nghiêng hiển thị trạng thái đã giao hay chưa cho tất cả các role */}
                       <AlertAssignmentLine
                         alertRef={alertRef}
                         tasks={tasks}
@@ -702,11 +717,11 @@ export default function RemindersPage({
                 </article>
               );
             })}
+            <ProgressivePaginationBar pagination={pagination} itemUnit="nhắc việc" />
           </div>
         )}
       </section>
 
-      {/* Bảng tổng hợp tất cả Báo động đỏ chưa được giao việc để Nhân viên nhắc nhanh / Sếp giao nhanh */}
       <section className="analytics-card management-panel space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>

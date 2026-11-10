@@ -1,6 +1,9 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { Lock, LockOpen } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Lock, LockOpen, RotateCcw, Search } from 'lucide-react';
 import { phrase, t } from '../../../locales/i18n.js';
+import { useDebouncedValue } from '../../../hooks/useDebounce.js';
+import { useProgressivePagination } from '../../../hooks/useProgressivePagination.js';
+import ProgressivePaginationBar from '../../../components/common/ProgressivePaginationBar.jsx';
 import { canEditAccount, defaultNavigationForRole, DEPARTMENT_ROLES, manageableRoles,
   navigationForRole, NAVIGATION_LABELS, OVERVIEW_SECTIONS, ROLE_PROFILES } from '../../../utils/roles.js';
 
@@ -47,6 +50,13 @@ export default function AccountsPage({ accounts, departmentNavigation, actor, on
   const [editingId, setEditingId] = useState(null);
   const [confirmation, setConfirmation] = useState(null);
   const [confirmError, setConfirmError] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [roleFilter, setRoleFilter] = useState('all');
+
+  // Debounced search and role filter for Accounts directory
+  const debouncedSearch = useDebouncedValue(searchQuery, 300);
+  const debouncedRoleFilter = useDebouncedValue(roleFilter, 150);
+
   const dialogRef = useRef(null);
   const editHeading = useRef(null);
   const editTrigger = useRef(null);
@@ -57,6 +67,29 @@ export default function AccountsPage({ accounts, departmentNavigation, actor, on
   }, [confirmation]);
   const roles = manageableRoles(actor);
   const editing = accounts.find(account => account.id === editingId);
+
+  const filteredAccounts = useMemo(() => {
+    const q = debouncedSearch.trim().toLowerCase();
+    return accounts.filter(acc => {
+      if (debouncedRoleFilter !== 'all' && acc.role !== debouncedRoleFilter) return false;
+      if (q) {
+        const hay = [acc.name, acc.email, acc.roleLabel, acc.department].filter(Boolean).join(' ').toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [accounts, debouncedSearch, debouncedRoleFilter]);
+
+  // Phân trang + Tải trước 1 phần & Cuộn tải dần + Clear trang cũ khi chuyển trang
+  const pagination = useProgressivePagination(filteredAccounts, {
+    sectionKey: 'users',
+    initialChunkSize: 6,
+    stepSize: 6,
+    pageSize: 12,
+    resetDeps: [debouncedSearch, debouncedRoleFilter],
+  });
+  const pagedAccounts = pagination.visibleItems;
+
   const submit = async (event, action) => {
     event.preventDefault();
     const form = event.currentTarget;
@@ -111,11 +144,47 @@ export default function AccountsPage({ accounts, departmentNavigation, actor, on
     </section>
 
     <section className="analytics-card management-panel">
-      <h2>{t('Danh sách tài khoản')}</h2>
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+        <h2>{t('Danh sách tài khoản')}</h2>
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <label className="inline-flex items-center gap-1.5 border border-slate-300 rounded-lg bg-white px-2.5 h-8">
+            <Search size={13} className="text-slate-400" />
+            <input
+              type="search"
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              placeholder={t('Tìm tên, email…')}
+              aria-label={t('Tìm tài khoản')}
+              className="outline-none bg-transparent text-xs w-36"
+            />
+          </label>
+          <select
+            value={roleFilter}
+            onChange={e => setRoleFilter(e.target.value)}
+            aria-label={t('Lọc vai trò')}
+            className="h-8 rounded-lg border border-slate-300 bg-white px-2 text-xs text-slate-800"
+          >
+            <option value="all">{t('Tất cả vai trò')}</option>
+            {Object.keys(ROLE_PROFILES).map(r => (
+              <option key={r} value={r}>{t(ROLE_PROFILES[r].label)}</option>
+            ))}
+          </select>
+          {(searchQuery || roleFilter !== 'all') && (
+            <button
+              type="button"
+              onClick={() => { setSearchQuery(''); setRoleFilter('all'); }}
+              className="row-detail-button h-8 text-xs"
+            >
+              <RotateCcw size={13} />
+              <span>{t('Xóa lọc')}</span>
+            </button>
+          )}
+        </div>
+      </div>
       <div className="table-scroll">
         <table className="management-table accounts-table">
           <thead><tr><th>{t('Họ và tên')}</th><th>{t('Vai trò')}</th><th>{t('Trạng thái')}</th><th>{t('Thao tác')}</th></tr></thead>
-          <tbody>{accounts.map(account => {
+          <tbody>{pagedAccounts.map(account => {
             const locked = account.status === 'inactive';
             const Icon = locked ? Lock : LockOpen;
             const actionLabel = locked ? 'Mở khóa tài khoản' : 'Khóa tài khoản';
@@ -143,6 +212,7 @@ export default function AccountsPage({ accounts, departmentNavigation, actor, on
           })}</tbody>
         </table>
       </div>
+      <ProgressivePaginationBar pagination={pagination} itemUnit="tài khoản" />
 
       {canEditAccount(actor, editing) && <form id="account-permissions-form" className="workflow-form management-edit" key={editing.id} onSubmit={event => submit(event, 'update-account')}>
         <fieldset disabled={busy}>

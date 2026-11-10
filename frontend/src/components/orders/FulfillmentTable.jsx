@@ -1,6 +1,7 @@
 import { phrase, t } from '../../locales/i18n.js';
 import React, { useId, useMemo, useState } from 'react';
 import { ArrowUpRight, ChevronRight, PackageCheck, ShoppingBag, Truck, ClipboardCheck } from 'lucide-react';
+import { useProgressivePagination } from '../../hooks/useProgressivePagination.js';
 import { fulfillmentSummary, matchesFulfillment, formatQuantity, formatPercent } from '../../utils/orderFulfillment.js';
 import DeliveryStatusChart from './DeliveryStatusChart.jsx';
 import ReceiptStatusChart from './ReceiptStatusChart.jsx';
@@ -8,6 +9,7 @@ import { deliveryAnalytics, matchesDeliveryChart } from '../../utils/deliveryAna
 import { matchesReceiptChart, receiptAnalytics } from '../../utils/receiptAnalytics.js';
 import { formatDate, formatMoney } from '../../utils/dashboardMetrics.js';
 import AlertAssignmentLine from '../common/AlertAssignmentLine.jsx';
+import ProgressivePaginationBar from '../common/ProgressivePaginationBar.jsx';
 
 export function QuantityProgress({ label, quantity, percent, unit, tone = 'normal' }) {
   return <div className={`quantity-progress ${tone}`}><div className="quantity-progress-values"><strong>{formatQuantity(quantity)}{quantity !== null && unit && <small> {unit}</small>}</strong><b>{formatPercent(percent)}</b></div>
@@ -39,7 +41,17 @@ export default function FulfillmentTable({
     if (filter === 'late') return ['late', 'today'].includes(delivery.risk);
     return matchesFulfillment(item, filter, reportDate);
   });
-  const visible = limit ? filtered.slice(0, limit) : filtered;
+
+  // Phân trang & tải trước 1 phần + tải dần khi lướt xuống (khi không bị giới hạn limit từ Tổng quan)
+  const pagination = useProgressivePagination(filtered, {
+    sectionKey: 'orders-fulfillment',
+    initialChunkSize: limit || 5,
+    stepSize: 5,
+    pageSize: limit || 10,
+    resetDeps: [activeFilter, reportDate, items.length],
+  });
+  const visible = limit ? filtered.slice(0, limit) : pagination.visibleItems;
+
   const orderValue = filtered.reduce((total, item) => total + (item.totalValueVnd ?? 0), 0);
   const unconfirmedInView = filtered.filter(item => chartRows.get(item.rowId)?.delivery === 'unconfirmed').length;
   const cards = [
@@ -92,6 +104,7 @@ export default function FulfillmentTable({
         <td><span className={`fulfillment-status ${statusTone}`}>{t(statusLabel)}</span>{statusLabel !== state.label && <small className="remaining-quantity">{t(state.label)}</small>}{state.remainingDelivery !== null && <small className="remaining-quantity">{t("Còn giao ")}{formatQuantity(state.remainingDelivery)} {item.unit}</small>}</td>
         <td className="sticky-action"><button className="row-detail-button" onClick={() => onOpenItem(item)} aria-label={t(`Chi tiết nhập giao ${item.poId}`)}><span>{t("Chi tiết")}</span><ChevronRight size={16} /></button></td></tr>;
     })}{!visible.length && <tr><td colSpan={7} className="empty-table">{t("Không có mã hàng phù hợp. ")}{(activeFilter !== 'all' || onResetFilters) && <button onClick={() => { setFilter('all'); onResetFilters?.(); }}>{t("Xóa bộ lọc")}</button>}</td></tr>}</tbody></table></div>
+    {!limit && <ProgressivePaginationBar pagination={pagination} itemUnit="mã hàng" />}
     <div className="fulfillment-footnote"><span>{t("Tỷ lệ = số lượng thực tế / SL đặt. “—”: chưa đủ dữ liệu.")}</span>{limit && filtered.length > limit && <button className="text-action" onClick={() => onViewAll(activeFilter)}>{phrase('Xem § mã hàng', filtered.length)}<ChevronRight size={14} /></button>}</div>
   </section>;
 }
