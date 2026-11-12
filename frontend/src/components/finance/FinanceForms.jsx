@@ -29,10 +29,10 @@ export function InvoiceForm({ finance, items, onAction, onClose }) {
     onAction('invoice', { ...values(event), shippedQty: qtyInspect.normalized });
   }}>
     <div className="workflow-grid">
-      <label>{t("Số hóa đơn")} <span className="required-mark" aria-hidden="true">*</span><input name="docNo" required maxLength={80} autoComplete="off" /></label>
+      <label>{t("Số hóa đơn")} <span className="required-mark" aria-hidden="true">*</span><input name="docNo" required maxLength={64} autoComplete="off" /></label>
       <label>{t("Khách hàng")} <span className="required-mark" aria-hidden="true">*</span><input name="customerName" required maxLength={200} list="invoice-customers" /><datalist id="invoice-customers">{[...new Set(finance.revenue.map(r => r.customerName))].map(name => <option key={name} value={name}>{t(name)}</option>)}</datalist></label>
       <label className="workflow-wide">{t("Dòng PO và mã hàng")} <span className="required-mark" aria-hidden="true">*</span><select name="rowId" required defaultValue=""><option value="" disabled>{t("Chọn PO và mã hàng")}</option>{items.map(item => <option key={item.rowId} value={item.rowId}>{item.poId} · {t(item.vendorItemNo)} · {t(item.vendorName)}</option>)}</select></label>
-      <label>{t("Ngày ghi nhận")} <span className="required-mark" aria-hidden="true">*</span><input name="recordDate" type="date" required min={finance.openingDate} max={businessToday()} defaultValue={businessToday()} /></label>
+      <label>{t("Ngày ghi nhận")} <span className="required-mark" aria-hidden="true">*</span><input name="recordDate" type="date" required min={dateInputValue(finance.openingDate) || undefined} max={businessToday()} defaultValue={businessToday()} /></label>
       <label>{t("Hạn thanh toán")} <span className="required-mark" aria-hidden="true">*</span><input name="dueDate" type="date" required /></label>
       <label>{t("Số lượng trên chứng từ")} <span className="required-mark" aria-hidden="true">*</span>
         <input type="text" inputMode="decimal" required value={shippedInput} onChange={e => setShippedInput(e.target.value)} placeholder={t("Ví dụ: 1.000 hoặc 0")} />
@@ -66,7 +66,14 @@ export function ReceiptWorkspace({ finance, onAction, onClose, initialDebtId }) 
     if (targetDebt) payload.customerName = targetDebt.customerName;
     if (receipt) payload.id = receipt.id;
     const next = await onAction('receipt', payload, false);
-    if (next) { setReceiptId(receipt?.id || next.receipts.at(-1).id); setDebtId(''); setCorrecting(false); }
+    if (next) {
+      const reference = String(payload.reference ?? '').trim().toLowerCase();
+      const savedReceipt = next.receipts.find(row => row.id === receipt?.id ||
+        String(row.reference ?? '').toLowerCase() === reference);
+      setReceiptId(savedReceipt?.id ?? 'new');
+      setDebtId('');
+      setCorrecting(false);
+    }
   };
   return <div className="workflow-form">
     {targetDebt && <p className="workflow-context"><strong>{targetDebt.docNo}</strong> · {t(targetDebt.customerName)}</p>}
@@ -99,8 +106,8 @@ export function ReceiptWorkspace({ finance, onAction, onClose, initialDebtId }) 
             <option value="">{t(receipt ? 'Chọn khách hàng' : 'Chưa xác định khách hàng')}</option>
             {customers.map(name => <option key={name} value={name}>{t(name)}</option>)}
           </select>}</label>
-        <label>{t("Tham chiếu ngân hàng hoặc phiếu thu")} <span className="required-mark" aria-hidden="true">*</span><input name="reference" required maxLength={200} defaultValue={receipt?.reference || ''} /></label>
-        <label>{t("Ngày nhận tiền")} <span className="required-mark" aria-hidden="true">*</span><input name="date" type="date" required max={businessToday()} min={receipt?.id === OPENING_RECEIPT_ID ? undefined : finance.openingDate} defaultValue={dateInputValue(receipt?.date) || businessToday()} /></label>
+        <label>{t("Tham chiếu ngân hàng hoặc phiếu thu")} <span className="required-mark" aria-hidden="true">*</span><input name="reference" required maxLength={120} defaultValue={receipt?.reference || ''} /></label>
+        <label>{t("Ngày nhận tiền")} <span className="required-mark" aria-hidden="true">*</span><input name="date" type="date" required max={businessToday()} min={receipt?.id === OPENING_RECEIPT_ID ? undefined : dateInputValue(finance.openingDate) || undefined} defaultValue={dateInputValue(receipt?.date) || businessToday()} /></label>
         {!receipt && <MoneyField name="amount" label={t("Số tiền đã nhận")} />}
         {correcting && <label className="workflow-wide">{t("Lý do sửa đối soát")} <span className="required-mark" aria-hidden="true">*</span><textarea name="correctionReason" required maxLength={500} /></label>}
       </div><Footer onClose={onClose} label={t(correcting ? 'Lưu đối soát đã sửa' : receipt ? 'Xác nhận đối soát' : 'Lưu khoản thu')} />
@@ -112,7 +119,7 @@ export function ReceiptWorkspace({ finance, onAction, onClose, initialDebtId }) 
       <div className="workflow-grid">
         <label className="workflow-wide">{t("Hóa đơn phải thu")} <span className="required-mark" aria-hidden="true">*</span><select name="debtId" required value={selectedDebt?.id || ''} onChange={event => setDebtId(event.target.value)}>{!debts.length && <option value="">{t("Không có hóa đơn còn dư nợ cùng khách hàng")}</option>}{debts.map(row => <option key={row.id} value={row.id}>{row.docNo}{t(" · Còn ")}{formatMoney(row.originalAmount + (row.adjustment || 0) - row.allocatedPaid)}</option>)}</select></label>
         <MoneyField name="amount" label={t("Số tiền phân bổ")} max={limit} key={`${receiptId}-${selectedDebt?.id}-${limit}`} defaultValue={limit || ''} />
-        <label>{t("Ngày phân bổ")} <span className="required-mark" aria-hidden="true">*</span><input name="date" type="date" required min={[finance.openingDate, dateInputValue(receipt.date), dateInputValue(finance.revenue.find(row => row.docNo === selectedDebt?.docNo)?.recordDate)].filter(Boolean).sort().at(-1)} max={businessToday()} defaultValue={businessToday()} /></label>
+        <label>{t("Ngày phân bổ")} <span className="required-mark" aria-hidden="true">*</span><input name="date" type="date" required min={[dateInputValue(finance.openingDate), dateInputValue(receipt.date), dateInputValue(finance.revenue.find(row => row.docNo === selectedDebt?.docNo)?.recordDate)].filter(Boolean).sort().at(-1)} max={businessToday()} defaultValue={businessToday()} /></label>
       </div><p className="workflow-summary">{t("Tối đa được phân bổ ")}{formatMoney(limit)}{t(". Khoản thu chưa phân bổ không cộng vào thực thu của hóa đơn.")}</p><Footer onClose={onClose} label={t("Xác nhận phân bổ")} disabled={!selectedDebt || limit <= 0} />
     </form>}
     <FinanceHistory entries={finance.audit.filter(row => row.type.startsWith('RECEIPT'))} />
@@ -130,7 +137,7 @@ export function PayableForm({ type, row, onAction, onClose, actorId }) {
     {needsPayableSplit(row) && <p className="workflow-callout">{t("Kế toán cần tách và đối soát chứng từ trước khi CEO duyệt chi.")}</p>}
     {action === 'submit' && <div className="workflow-grid"><MoneyField name="amount" label={t("Số tiền đề nghị")} max={remaining} defaultValue={remaining} /><label>{t("Hạn thanh toán đề nghị")} <span className="required-mark" aria-hidden="true">*</span><input name="dueDate" type="date" required defaultValue={dateInputValue(row.dueDate)} /></label><label className="workflow-wide">{t("Nội dung đề nghị")} <span className="required-mark" aria-hidden="true">*</span><textarea name="note" required maxLength={500} /></label></div>}
     {action === 'review' && <><p className="review-amount">{t("Đề nghị ")}<strong>{formatMoney(row.requestAmount)}</strong>{t(" · Hạn đề nghị ")}{formatDate(row.requestedDueDate || row.dueDate)}</p><p>{t(row.requestNote || 'Hồ sơ chờ duyệt được chuyển từ dữ liệu mở đầu.')}</p>{row.requestedBy === actorId && <p className="workflow-callout">{t('Người lập đề nghị không được tự duyệt.')}</p>}<label>{t("Ý kiến xử lý")} <span className="required-mark" aria-hidden="true">*</span><textarea name="note" required maxLength={500} /></label><div className="workflow-footer"><button type="button" onClick={onClose}>{t("Hủy")}</button><button type="submit" value="return">{t("Yêu cầu bổ sung")}</button><button className="primary" type="submit" value="approve" disabled={needsPayableSplit(row) || row.requestedBy === actorId}>{t("Duyệt đề nghị")}</button></div></>}
-    {action === 'pay' && <div className="workflow-grid"><MoneyField name="amount" label={t("Số tiền đã chi")} max={Math.min(remaining, row.approvedRemaining)} /><label>{t("Ngày chi")} <span className="required-mark" aria-hidden="true">*</span><input name="date" type="date" required min={dateInputValue(row.reviewedDate) || undefined} max={businessToday()} defaultValue={businessToday()} /></label><label className="workflow-wide">{t("Tham chiếu ngân hàng hoặc phiếu chi")} <span className="required-mark" aria-hidden="true">*</span><input name="reference" required maxLength={200} /></label><p className="workflow-summary workflow-wide">{t("Hạn mức được duyệt còn lại ")}{formatMoney(row.approvedRemaining)}{t(". Ghi nhận sau khi có chứng từ chi tiền.")}</p></div>}
+    {action === 'pay' && <div className="workflow-grid"><MoneyField name="amount" label={t("Số tiền đã chi")} max={Math.min(remaining, row.approvedRemaining)} /><label>{t("Ngày chi")} <span className="required-mark" aria-hidden="true">*</span><input name="date" type="date" required min={dateInputValue(row.reviewedDate) || undefined} max={businessToday()} defaultValue={businessToday()} /></label><label className="workflow-wide">{t("Tham chiếu ngân hàng hoặc phiếu chi")} <span className="required-mark" aria-hidden="true">*</span><input name="reference" required maxLength={120} /></label><p className="workflow-summary workflow-wide">{t("Hạn mức được duyệt còn lại ")}{formatMoney(row.approvedRemaining)}{t(". Ghi nhận sau khi có chứng từ chi tiền.")}</p></div>}
     {action !== 'review' && <Footer onClose={onClose} label={t(action === 'submit' ? 'Trình CEO duyệt' : 'Ghi nhận khoản đã chi')} />}
   </form>;
 }
@@ -152,7 +159,7 @@ export function SplitPayableForm({ row, items, onAction, onClose }) {
       <legend className="font-semibold">{code} · {t(name)}</legend>
       <p className="mb-2 text-xs text-slate-600">{[...new Set(lines.map(line => line.poId))].join(' · ')}</p>
       <div className="workflow-grid">
-        <label>{t("Số chứng từ riêng")} <span className="required-mark" aria-hidden="true">*</span><input name={`docNo-${code}`} required maxLength={80} /></label>
+        <label>{t("Số chứng từ riêng")} <span className="required-mark" aria-hidden="true">*</span><input name={`docNo-${code}`} required maxLength={64} /></label>
         <label>{t("Hạn thanh toán đã xác minh")}<input name={`dueDate-${code}`} type="date" /></label>
         <MoneyField name={`original-${code}`} label={t("Số tiền gốc")} max={row.originalAmount} />
         {row.adjustment > 0 && <MoneyField name={`adjustment-${code}`} label={t("Tiền điều chỉnh (bỏ trống nếu 0)")} max={row.adjustment} required={false} />}

@@ -1,15 +1,16 @@
 import { phrase, t } from '../../locales/i18n.js';
-import React, { useId, useMemo, useState } from 'react';
+import React, { lazy, Suspense, useId, useMemo, useState } from 'react';
 import { ArrowUpRight, ChevronRight, PackageCheck, ShoppingBag, Truck, ClipboardCheck } from 'lucide-react';
 import { useProgressivePagination } from '../../hooks/useProgressivePagination.js';
 import { fulfillmentSummary, matchesFulfillment, formatQuantity, formatPercent } from '../../utils/orderFulfillment.js';
-import DeliveryStatusChart from './DeliveryStatusChart.jsx';
 import ReceiptStatusChart from './ReceiptStatusChart.jsx';
 import { deliveryAnalytics, matchesDeliveryChart } from '../../utils/deliveryAnalytics.js';
 import { matchesReceiptChart, receiptAnalytics } from '../../utils/receiptAnalytics.js';
 import { formatDate, formatMoney } from '../../utils/dashboardMetrics.js';
 import AlertAssignmentLine from '../common/AlertAssignmentLine.jsx';
 import ProgressivePaginationBar from '../common/ProgressivePaginationBar.jsx';
+
+const DeliveryStatusChart = lazy(() => import('./DeliveryStatusChart.jsx'));
 
 export function QuantityProgress({ label, quantity, percent, unit, tone = 'normal' }) {
   return <div className={`quantity-progress ${tone}`}><div className="quantity-progress-values"><strong>{formatQuantity(quantity)}{quantity !== null && unit && <small> {unit}</small>}</strong><b>{formatPercent(percent)}</b></div>
@@ -59,11 +60,13 @@ export default function FulfillmentTable({
     ['partial_delivery', 'Đang giao một phần', summary.partial, Truck], ['delivered', 'Đã giao đủ', summary.delivered, ClipboardCheck],
   ];
   return <section className="analytics-card fulfillment-panel">
-    <div className="panel-heading"><div><h2>{t("Đặt hàng · Nhập kho · Giao khách")}</h2><p>{t("Theo dõi số lượng và tỷ lệ trên từng mã hàng")}</p>{orderValue > 0 && <p>{t("Giá trị PO theo BM41")} <strong>{formatMoney(orderValue)}</strong></p>}</div>{onViewAll && <button className="text-action" onClick={() => onViewAll(activeFilter)}>{t(activeFilter === 'all' ? 'Xem tất cả' : 'Xem danh sách đã lọc')} <ArrowUpRight size={15} /></button>}</div>
+    <div className="panel-heading"><div><h2>{t("Đặt hàng · Nhập kho · Giao khách")}</h2><p>{t("Theo dõi số lượng và tỷ lệ trên từng mã hàng")}</p>{orderValue > 0 && <p>{t("Giá trị PO")} <strong>{formatMoney(orderValue)}</strong></p>}</div>{onViewAll && <button className="text-action" onClick={() => onViewAll(activeFilter)}>{t(activeFilter === 'all' ? 'Xem tất cả' : 'Xem danh sách đã lọc')} <ArrowUpRight size={15} /></button>}</div>
     <ReceiptStatusChart analytics={receipts} reportDate={reportDate} filter={receiptFilter} onSelect={value => toggleFilter(`receipt:${value}`)} onOpenItem={onOpenItem} compact={Boolean(limit)} />
     {!limit && <section aria-labelledby={`${id}-outbound`}>
       <div className="receipt-overview-heading"><div><h3 id={`${id}-outbound`}><Truck size={19} />{t(" Hàng giao khách")}</h3><p>{t("Theo dõi tiến độ giao và đơn cần xử lý")}</p></div></div>
-      <DeliveryStatusChart analytics={analytics} filter={receiptFilter ? 'all' : chartFilter} onSelect={toggleFilter} onOpenItem={onOpenItem} />
+      <Suspense fallback={<p role="status">{t('Đang tải dữ liệu…')}</p>}>
+        <DeliveryStatusChart analytics={analytics} filter={receiptFilter ? 'all' : chartFilter} onSelect={toggleFilter} onOpenItem={onOpenItem} />
+      </Suspense>
     </section>}
     {limit && <div className="fulfillment-summary">{cards.map(([key, label, count, Icon]) => <button key={key} onClick={() => toggleFilter(key)} aria-pressed={filter === key}><Icon size={19} /><div><strong>{count}<small>{t(" mã hàng")}</small></strong><span>{t(label)}</span></div></button>)}</div>}
     {receiptFilter && <div className="delivery-selected-filter">

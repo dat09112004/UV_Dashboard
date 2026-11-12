@@ -1,4 +1,4 @@
-// Client task request guard; actual demo actions also check account and task ownership.
+// Client-side visibility checks. The API verifies permissions on each request.
 export const canCreateOrAssignTask = (role) => ['CEO', 'Admin'].includes(role);
 export const canChangeOfficialDeadlineOrAssignee = canCreateOrAssignTask;
 export const canConfirmTaskCompletion = canCreateOrAssignTask;

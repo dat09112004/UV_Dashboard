@@ -1,5 +1,4 @@
-export const DEMO_REPORT_DATE = '05/11/2026';
-export const SALE_NAMES = ['Lê Hương (Sale)', 'Nguyễn Minh (Sale)'];
+
 
 export function parseBusinessDate(value) {
   if (typeof value !== 'string') return null;
@@ -7,6 +6,7 @@ export function parseBusinessDate(value) {
   const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
   if (!vn && !iso) return null;
   const [y, m, d] = vn ? [Number(vn[3]), Number(vn[2]), Number(vn[1])] : [Number(iso[1]), Number(iso[2]), Number(iso[3])];
+  if (y < 1900 || y > 2100) return null;
   const date = new Date(Date.UTC(y, m - 1, d));
   return date.getUTCFullYear() === y && date.getUTCMonth() === m - 1 && date.getUTCDate() === d ? date : null;
 }
@@ -30,7 +30,7 @@ export function nowVN() {
   return new Intl.DateTimeFormat('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', dateStyle: 'short', timeStyle: 'short' }).format(new Date());
 }
 
-export function isTaskOverdue(task, reportDate = DEMO_REPORT_DATE) {
+export function isTaskOverdue(task, reportDate = businessToday()) {
   const due = parseBusinessDate(task.deadline);
   const report = parseBusinessDate(reportDate);
   return task.status !== 'Hoàn tất' && Boolean(due && report && due < report);
@@ -38,11 +38,11 @@ export function isTaskOverdue(task, reportDate = DEMO_REPORT_DATE) {
 
 export function canWorkOnTask(user, task) {
   if (task?.assigneeId) return Boolean(user?.status === 'active' && user.id === task.assigneeId &&
-    user.permissions?.includes('tasks.handover'));
+    user.permissions?.includes('tasks.read'));
   return Boolean(user?.role === 'Sale' && task && task.assignee === `${user.name} (Sale)`);
 }
 
-export function debtAtDate(record, reportDate = DEMO_REPORT_DATE) {
+export function debtAtDate(record, reportDate = businessToday()) {
   if (!record) throw new Error('Không tìm thấy chứng từ công nợ.');
   const report = parseBusinessDate(reportDate);
   if (!report) throw new Error('Ngày báo cáo không hợp lệ.');
@@ -59,7 +59,7 @@ export function isDue(record, reportDate) {
   return record.remaining > 0 && Boolean(due && report && due <= report);
 }
 
-export function inRevenuePeriod(record, period, anchor = DEMO_REPORT_DATE) {
+export function inRevenuePeriod(record, period, anchor = businessToday()) {
   const date = parseBusinessDate(record.recordDate);
   if (!date || record.approvalStatus !== 'Đã duyệt') return false;
   if (period === 'Tất cả các kỳ') return true;
@@ -81,7 +81,7 @@ export function ageSummary(records) {
   });
 }
 
-export function onTimeStats(shipments, reportDate = DEMO_REPORT_DATE) {
+export function onTimeStats(shipments, reportDate = businessToday()) {
   const report = parseBusinessDate(reportDate);
   const due = shipments.filter(s => parseBusinessDate(s.etd) && parseBusinessDate(s.etd) <= report);
   const onTime = due.filter(s => {
@@ -121,7 +121,7 @@ export function updateTask(task, user, action, payload = {}, time = nowVN()) {
     patch = { deadline: payload.accept ? task.proposedDeadline : task.deadline, proposedDeadline: null, proposedAssignee: null, proposalReason: null };
     text = payload.accept ? `CEO duyệt đổi hạn ${task.deadline} → ${patch.deadline}.` : `CEO từ chối; giữ hạn ${task.deadline}.`;
   } else if (action === 'assign') {
-    if ((task.assigneeId ? !payload.assigneeId : !SALE_NAMES.includes(payload.assignee)) || !parseBusinessDate(payload.deadline) || !payload.reason?.trim()) throw new Error('Cần người nhận Sale, ngày hợp lệ và lý do thay đổi.');
+    if ((task.assigneeId ? !payload.assigneeId : !payload.assignee?.trim()) || !parseBusinessDate(payload.deadline) || !payload.reason?.trim()) throw new Error('Cần người nhận Sale, ngày hợp lệ và lý do thay đổi.');
     if (task.status === 'Hoàn tất') throw new Error('Không thể sửa phân công của công việc đã hoàn tất.');
     patch = { assignee: payload.assignee, ...(task.assigneeId ? { assigneeId: payload.assigneeId } : {}), deadline: formatBusinessDate(payload.deadline), proposedDeadline: null, proposedAssignee: null, proposalReason: null };
     if (task.assigneeId ? payload.assigneeId !== task.assigneeId : payload.assignee !== task.assignee) {
@@ -151,12 +151,12 @@ export function validateProgress(po, values) {
   return po.shipments.map(s => {
     if (!delta || s.id !== values.shipmentId) return s;
     const shippedQty = (s.shippedQty ?? (parseBusinessDate(s.actualShip) ? s.qty : 0)) + delta;
-    const actualShip = shippedQty > 0 ? delta < 0 && parseBusinessDate(s.actualShip) ? s.actualShip : DEMO_REPORT_DATE : '—';
+    const actualShip = shippedQty > 0 ? delta < 0 && parseBusinessDate(s.actualShip) ? s.actualShip : businessToday() : '—';
     return { ...s, shippedQty, actualShip, status: shippedQty === s.qty ? 'Đã xuất' : shippedQty ? 'Xuất một phần' : 'Đang chuẩn bị', onTime: shippedQty < s.qty ? s.onTime : parseBusinessDate(s.etd) && parseBusinessDate(actualShip) <= parseBusinessDate(s.etd) ? 'Đúng hạn' : 'Quá hạn' };
   });
 }
 
-export function allocatePayment(payment, debt, rawAmount, date = DEMO_REPORT_DATE) {
+export function allocatePayment(payment, debt, rawAmount, date = businessToday()) {
   const amount = Number(rawAmount);
   if (!payment || !debt) throw new Error('Không tìm thấy giao dịch hoặc chứng từ.');
   if (!Number.isFinite(amount) || amount <= 0 || amount > payment.unallocatedAmount || amount > debt.remaining) throw new Error('Số phân bổ phải lớn hơn 0, không vượt tiền chưa phân bổ hoặc dư nợ chứng từ.');

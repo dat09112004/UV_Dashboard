@@ -2,7 +2,6 @@ import { linkedItems, poReferences } from './recordReferences.js';
 import { newRecordId } from './recordId.js';
 import { parseBusinessDate, formatBusinessDate, businessToday } from './business.js';
 
-export const FINANCE_STORAGE_KEY = 'uv-finance-workflow-v1';
 export const AP_REVIEW = 'Kế toán đang kiểm tra hồ sơ';
 export const AP_PENDING = 'Chờ CEO duyệt chi';
 export const AP_APPROVED = 'Đã duyệt';
@@ -50,14 +49,13 @@ const event = (state, user, type, reference, detail, amount = null) => {
   return state;
 };
 
-export function initialFinanceState(revenue, receivables, payables, openingDate, { includeOpeningReceipt = true } = {}) {
+export function initialFinanceState(revenue, receivables, payables, openingDate) {
   return {
     version: 1, openingDate, revision: 0, isPeriodLocked: false,
     revenue: clone(revenue), receivables: clone(receivables),
     payables: payables.map(row => ({ ...row, approvedRemaining: row.approvalState === AP_APPROVED ? balance(row) : 0,
       requestAmount: row.approvalState === AP_PENDING ? balance(row) : null, approvalOrigin: 'opening' })),
-    // The supplied aggregate has no verified customer/reference. Never guess ownership.
-    receipts: includeOpeningReceipt ? [{ id: OPENING_RECEIPT_ID, amount: 25000000, allocatedAmount: 0, customerName: null, currency: 'VND', reference: '', date: '', status: 'unidentified' }] : [],
+    receipts: [],
     allocations: [], payments: [], audit: [], payableSplitSources: [],
   };
 }
@@ -87,29 +85,6 @@ export function validateFinanceState(state) {
   return state;
 }
 
-const storage = () => { try { return globalThis.localStorage; } catch { return null; } };
-export function loadFinanceState(base, target = storage(), storageKey = FINANCE_STORAGE_KEY) {
-  try {
-    const raw = target?.getItem(storageKey);
-    if (!raw) return clone(base);
-    const saved = validateFinanceState(JSON.parse(raw));
-    if (saved.openingDate !== base.openingDate) throw new Error('Khác ngày mở dữ liệu.');
-    return saved;
-  } catch { return { ...clone(base), loadIssue: 'Không thể đọc dữ liệu tài chính đã lưu. Đã mở dữ liệu gốc; kiểm tra bản lưu trước khi nhập tiếp.' }; }
-}
-export function persistFinanceState(state, target = storage(), storageKey = FINANCE_STORAGE_KEY, expectedRevision = state.revision - 1) {
-  validateFinanceState(state);
-  if (!target) throw new Error('Không thể lưu dữ liệu trên trình duyệt này.');
-  const previous = target.getItem(storageKey);
-  const previousRevision = previous ? JSON.parse(previous).revision : 0;
-  if (previousRevision !== expectedRevision) throw new Error('Dữ liệu đã thay đổi ở cửa sổ khác. Tải lại trang trước khi thao tác tiếp.');
-  target.setItem(storageKey, JSON.stringify(state));
-}
-
-export async function saveFinanceState(state, locks = globalThis.navigator?.locks, storageKey = FINANCE_STORAGE_KEY) {
-  if (!locks) throw new Error('Cần mở ứng dụng qua HTTPS hoặc localhost bằng trình duyệt hỗ trợ khóa giữa các tab để lưu tài chính.');
-  return locks.request(storageKey, () => persistFinanceState(state, undefined, storageKey));
-}
 export const unallocatedTotal = state => state.receipts.reduce((sum, row) => sum + row.amount - row.allocatedAmount, 0);
 
 export function recordInvoice(state, user, payload, items, today = businessToday()) {

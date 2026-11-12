@@ -1,18 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { createPageAbortSignal, releasePageCacheApi } from '../services/api.js';
 
-/**
- * Hook Phân trang kết hợp Tải trước 1 phần & Cuộn tải dần (Progressive Scroll + Page Eviction):
- * 1. Khi mở trang hoặc đổi bộ lọc: chỉ tải/hiển thị trước 1 phần (`initialChunkSize` mục đầu tiên của trang).
- * 2. Khi người dùng lướt xuống (IntersectionObserver trên `sentinelRef`) hoặc nhấn "Tải thêm":
- *    tự động tải dần từng phần tiếp theo (`stepSize` mục) cho đến hết trang/danh sách.
- * 3. Khi người dùng bấm sang trang khác (`goToPage`) hoặc chuyển sang phân hệ khác (`sectionKey` thay đổi / unmount):
- *    - Hủy ngay các request cũ qua `AbortController`.
- *    - Xóa bộ đệm dữ liệu của trang cũ (`visibleCount` đặt lại về `initialChunkSize`).
- *    - Gửi tín hiệu `releasePageCacheApi` lên Backend để xóa Redis Cache của trang cũ, tránh làm nặng máy chủ.
- */
+const EMPTY_ITEMS = [];
+
 export function useProgressivePagination(
-  allItems = [],
+  allItems = EMPTY_ITEMS,
   {
     sectionKey = 'general',
     initialChunkSize = 6,
@@ -21,7 +12,7 @@ export function useProgressivePagination(
     resetDeps = [],
   } = {}
 ) {
-  const safeItems = Array.isArray(allItems) ? allItems : [];
+  const safeItems = Array.isArray(allItems) ? allItems : EMPTY_ITEMS;
   const totalItems = safeItems.length;
   const effectivePageSize = Math.max(initialChunkSize, pageSize);
   const totalPages = Math.max(1, Math.ceil(totalItems / effectivePageSize));
@@ -59,13 +50,10 @@ export function useProgressivePagination(
     nextPage => {
       const targetPage = Math.max(1, Math.min(totalPages, Number(nextPage) || 1));
       if (targetPage === activePageRef.current) return;
-      const previousPage = activePageRef.current;
-      createPageAbortSignal(sectionKey);
-      releasePageCacheApi({ previousSection: sectionKey, previousPage });
       setCurrentPage(targetPage);
       setVisibleCount(initialChunkSize);
     },
-    [totalPages, sectionKey, initialChunkSize]
+    [totalPages, initialChunkSize]
   );
 
   // Khi thay đổi từ khóa tìm kiếm / bộ lọc -> Đặt lại về Trang 1 và chỉ tải trước 1 phần đầu
@@ -74,14 +62,6 @@ export function useProgressivePagination(
     setVisibleCount(initialChunkSize);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sectionKey, initialChunkSize, ...resetDeps]);
-
-  // Khi người dùng rời khỏi trang/phân hệ hiện tại (unmount hoặc đổi sectionKey) -> Clear cache trang cũ trên Server
-  useEffect(() => {
-    return () => {
-      createPageAbortSignal(sectionKey);
-      releasePageCacheApi({ previousSection: sectionKey, previousPage: activePageRef.current });
-    };
-  }, [sectionKey]);
 
   // Tự động tải dần (Progressive Infinite Scroll trong phạm vi trang) khi người dùng lướt xuống chạm sentinel
   useEffect(() => {

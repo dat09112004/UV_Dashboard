@@ -1,4 +1,5 @@
-const keyFor = actorId => `uv-entry-draft-v1:${actorId}`;
+const DRAFT_KEY_PREFIX = 'uv-entry-draft-v1:';
+const keyFor = actorId => `${DRAFT_KEY_PREFIX}${actorId}`;
 const temporaryDrafts = new Map();
 export const entryDraftIsTemporary = actorId => temporaryDrafts.has(actorId);
 
@@ -22,6 +23,34 @@ export function storeEntryDraft(actorId, draft) {
   } catch {
     temporaryDrafts.set(actorId, draft);
     return false;
+  }
+}
+
+// S13 Fix: Xóa toàn bộ bản nháp nghiệp vụ trong sessionStorage và bộ nhớ tạm khi đăng xuất hoặc hết hạn phiên
+export function clearEntryDrafts(actorId) {
+  if (actorId) {
+    temporaryDrafts.delete(actorId);
+  } else {
+    temporaryDrafts.clear();
+  }
+  try {
+    const storage = globalThis.sessionStorage;
+    if (!storage) return;
+    if (actorId) {
+      storage.removeItem(keyFor(actorId));
+    }
+    const keysToRemove = [];
+    for (let i = 0; i < storage.length; i += 1) {
+      const k = storage.key(i);
+      if (k && k.startsWith(DRAFT_KEY_PREFIX)) {
+        keysToRemove.push(k);
+      }
+    }
+    for (const k of keysToRemove) {
+      storage.removeItem(k);
+    }
+  } catch {
+    // Ignore sessionStorage cleanup errors in restricted environments
   }
 }
 

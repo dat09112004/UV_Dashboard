@@ -1,7 +1,7 @@
 import { getLanguage, t } from '../../../locales/i18n.js';
 import React, { useEffect, useId, useRef, useState } from 'react';
 import { ChevronDown, Eye, EyeOff, KeyRound, LogOut, UserRound, X } from 'lucide-react';
-import { changeMockPassword } from '../services/mockAuth.js';
+import { changePassword } from '../services/authService.js';
 
 function Avatar({ user }) {
   return <span className="profile-avatar" aria-hidden="true">{user.initials}</span>;
@@ -15,7 +15,7 @@ function PasswordField({ name, label, autoComplete }) {
     <label htmlFor={id}>{t(label)}</label>
     <div className="profile-password-input">
       <input id={id} name={name} type={visible ? 'text' : 'password'} autoComplete={autoComplete}
-        required maxLength={128} minLength={autoComplete === 'new-password' ? 8 : undefined} />
+        required maxLength={128} minLength={autoComplete === 'new-password' ? 12 : undefined} />
       <button type="button" onClick={() => setVisible(!visible)} aria-label={visibilityLabel} title={visibilityLabel}>
         {visible ? <EyeOff size={18} /> : <Eye size={18} />}
       </button>
@@ -61,9 +61,9 @@ function AccountDialog({ view, user, onClose, onChangeView, onPasswordChanged })
     setSaving(true);
     let issue;
     try {
-      issue = await changeMockPassword(user.id, form.get('currentPassword'), password);
+      issue = await changePassword(user.id, form.get('currentPassword'), password);
     } catch {
-      issue = 'Không thể lưu mật khẩu trong trình duyệt này. Vui lòng thử lại.';
+      issue = 'Không thể cập nhật mật khẩu. Vui lòng thử lại.';
     } finally {
       setSaving(false);
     }
@@ -85,7 +85,7 @@ function AccountDialog({ view, user, onClose, onChangeView, onPasswordChanged })
         <PasswordField name="newPassword" label={t("Mật khẩu mới")} autoComplete="new-password" />
         <PasswordField name="confirmPassword" label={t("Xác nhận mật khẩu mới")} autoComplete="new-password" />
       </fieldset>
-      <p id={noteId} className="profile-dialog-note">{t("Dùng từ 8 đến 128 ký tự. Mật khẩu thử nghiệm áp dụng trên trình duyệt này và bạn sẽ đăng nhập lại sau khi lưu.")}</p>
+      <p id={noteId} className="profile-dialog-note">{t("Dùng từ 12 đến 128 ký tự. Đăng nhập lại sau khi lưu.")}</p>
       {error && <p className="profile-form-error" role="alert">{t(error)}</p>}
       <div className="profile-dialog-actions">
         <button type="button" className="profile-secondary" onClick={closeDialog} disabled={saving}>{t("Hủy")}</button>

@@ -475,7 +475,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   margin-bottom: 12px;
 }
 
-. management-panel .assignment-form fieldset > label,
+.management-panel .assignment-form fieldset > label,
 .assignment-form fieldset > label {
   margin-bottom: 0 !important;
 }

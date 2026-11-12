@@ -15,33 +15,39 @@ function RoleSelect({ roles, defaultValue, onChange }) {
 
 function NavigationFields({ account, roles, departmentNavigation, onApplyDepartment, onCancel }) {
   const [role, setRole] = useState(account.role);
-  const [selected, setSelected] = useState(account.navigation);
+  const [selected, setSelected] = useState(() =>
+    departmentNavigation?.[account.role] ?? defaultNavigationForRole(account.role));
   const detailsAvailable = OVERVIEW_SECTIONS.every(section => selected.includes(section));
+  const selectedForDepartment = selected.filter(section => section !== 'overview' || detailsAvailable);
   return <>
     <RoleSelect roles={roles} defaultValue={role} onChange={event => {
       const nextRole = event.target.value;
       setRole(nextRole);
-      setSelected(nextRole === account.role ? account.navigation : departmentNavigation?.[nextRole] ?? defaultNavigationForRole(nextRole));
+      setSelected(departmentNavigation?.[nextRole] ?? defaultNavigationForRole(nextRole));
     }} />
-    <fieldset className="navigation-checklist">
-      <legend>{t('Trang được phép truy cập')}</legend>
-      {navigationForRole(role).map(section => <label key={section}>
-        <input type="checkbox" name="navigation" value={section}
-          checked={selected.includes(section) && (section !== 'overview' || detailsAvailable)}
-          disabled={section === 'overview' && !detailsAvailable}
-          onChange={event => setSelected(event.target.checked ? [...selected, section] : selected.filter(value => value !== section))} />
-        {t(NAVIGATION_LABELS[section])}
-      </label>)}
-      <label><input type="checkbox" checked disabled />{t('Nhập liệu Excel')}</label>
-    </fieldset>
-    <p className="management-note">{t('Tổng quan cần quyền xem đủ đơn hàng, doanh thu và công nợ. Nhập liệu Excel luôn có sẵn theo quyền của vai trò.')}</p>
+    {Object.hasOwn(DEPARTMENT_ROLES, role) && <>
+      <fieldset className="navigation-checklist">
+        <legend>{t('Trang được phép truy cập của phòng ban')}</legend>
+        {navigationForRole(role).map(section => <label key={section}>
+          <input type="checkbox" value={section}
+            checked={selectedForDepartment.includes(section)}
+            disabled={section === 'overview' && !detailsAvailable}
+            onChange={event => {
+              const checked = event.target.checked;
+              setSelected(previous => checked ? [...previous, section] : previous.filter(value => value !== section));
+            }} />
+          {t(NAVIGATION_LABELS[section])}
+        </label>)}
+      </fieldset>
+      <p className="management-note">{t('Lưu thay đổi để cập nhật vai trò tài khoản. Dùng nút áp dụng để cập nhật các trang cho cả phòng ban.')}</p>
+      <button type="button" className="row-detail-button" disabled={!selectedForDepartment.length}
+        onClick={() => onApplyDepartment(role, selectedForDepartment)}>
+        {t('Áp dụng cho toàn bộ phòng ban')}
+      </button>
+    </>}
     <div className="workflow-footer">
-      {role === account.role && Object.hasOwn(DEPARTMENT_ROLES, role) &&
-        <button type="button" onClick={event => onApplyDepartment(role, new FormData(event.currentTarget.form).getAll('navigation'))}>
-          {t('Áp dụng cho toàn bộ phòng ban')}
-        </button>}
       <button type="button" onClick={onCancel}>{t('Hủy')}</button>
-      <button className="primary" type="submit">{t('Lưu thay đổi')}</button>
+      <button className="primary" type="submit">{t('Lưu vai trò')}</button>
     </div>
   </>;
 }
@@ -95,7 +101,6 @@ export default function AccountsPage({ accounts, departmentNavigation, actor, on
     const form = event.currentTarget;
     const fields = new FormData(form);
     const payload = Object.fromEntries(fields);
-    if (action === 'update-account') payload.navigation = fields.getAll('navigation');
     if (!await onAction(action, payload)) return;
     if (action === 'create-account') form.reset();
     else closeEditor();
@@ -135,7 +140,7 @@ export default function AccountsPage({ accounts, departmentNavigation, actor, on
         <fieldset disabled={busy}>
           <label>{t('Họ và tên')} <span className="required-mark" aria-hidden="true">*</span><input name="name" autoComplete="name" required maxLength={100} /></label>
           <label>{t('Email')} <span className="required-mark" aria-hidden="true">*</span><input name="email" type="email" autoComplete="off" required maxLength={254} /></label>
-          <label>{t('Mật khẩu ban đầu')} <span className="required-mark" aria-hidden="true">*</span><input name="password" type="password" autoComplete="new-password" required minLength={8} maxLength={128} /></label>
+          <label>{t('Mật khẩu ban đầu')} <span className="required-mark" aria-hidden="true">*</span><input name="password" type="password" autoComplete="new-password" required minLength={12} maxLength={128} /></label>
           <RoleSelect roles={roles} defaultValue="Sale" />
           <div className="workflow-footer"><button className="primary" type="submit">{t('Tạo tài khoản')}</button></div>
         </fieldset>
@@ -185,7 +190,7 @@ export default function AccountsPage({ accounts, departmentNavigation, actor, on
         <table className="management-table accounts-table">
           <thead><tr><th>{t('Họ và tên')}</th><th>{t('Vai trò')}</th><th>{t('Trạng thái')}</th><th>{t('Thao tác')}</th></tr></thead>
           <tbody>{pagedAccounts.map(account => {
-            const locked = account.status === 'inactive';
+            const locked = account.status !== 'active';
             const Icon = locked ? Lock : LockOpen;
             const actionLabel = locked ? 'Mở khóa tài khoản' : 'Khóa tài khoản';
             return <tr key={account.id} className={locked ? 'account-row-locked' : undefined}>
@@ -205,7 +210,7 @@ export default function AccountsPage({ accounts, departmentNavigation, actor, on
                   onClick={() => requestConfirmation({
                     action: 'set-account-status', title: actionLabel, label: locked ? 'Mở khóa' : 'Khóa tài khoản', danger: !locked,
                     description: phrase(locked ? 'Cho phép § đăng nhập lại?' : 'Khóa đăng nhập của §? Các công việc đã giao vẫn được lưu.', account.name),
-                    payload: { id: account.id, expectedStatus: account.status, status: locked ? 'active' : 'inactive' },
+                    payload: { id: account.id, expectedStatus: account.status, expectedTokenVersion: account.tokenVersion, status: locked ? 'active' : 'inactive' },
                   })}><Icon size={17} aria-hidden="true" /></button>
               </div>}</td>
             </tr>;
@@ -217,6 +222,7 @@ export default function AccountsPage({ accounts, departmentNavigation, actor, on
       {canEditAccount(actor, editing) && <form id="account-permissions-form" className="workflow-form management-edit" key={editing.id} onSubmit={event => submit(event, 'update-account')}>
         <fieldset disabled={busy}>
           <input type="hidden" name="id" value={editing.id} />
+          {editing.tokenVersion !== undefined && <input type="hidden" name="expectedTokenVersion" value={editing.tokenVersion} />}
           <h3 ref={editHeading} tabIndex={-1}>{t('Cấp quyền')} · {editing.name}</h3>
           <NavigationFields roles={roles} account={editing} departmentNavigation={departmentNavigation}
             onCancel={closeEditor} onApplyDepartment={(role, navigation) => requestConfirmation({

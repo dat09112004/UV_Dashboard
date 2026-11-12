@@ -14,6 +14,7 @@ import {
   REMINDER_ASSIGNED,
   REMINDER_PENDING,
   resolveAlertAssignmentInfo,
+  reminderMatchesAlert,
   TASK_DEPARTMENTS,
 } from '../services/taskWorkflow.js';
 import AlertAssignmentLine from '../../../components/common/AlertAssignmentLine.jsx';
@@ -451,7 +452,7 @@ export default function RemindersPage({
                   onChange={e => setCustomReference(e.target.value)}
                   required
                   maxLength={160}
-                  placeholder={t('Ví dụ: UV-Intl-3500005 hoặc DEMO-BILL-03')}
+                  placeholder={t('Nhập mã PO hoặc số chứng từ')}
                   className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-slate-900"
                 />
               </label>
@@ -609,7 +610,7 @@ export default function RemindersPage({
                 type: reminder.alertType,
                 reference: reminder.reference,
               };
-              const matchedAlert = alerts.find(a => a.id === reminder.alertId || a.reference === reminder.reference);
+              const matchedAlert = alerts.find(alert => reminderMatchesAlert(reminder, alert));
               const isPending = reminder.status === REMINDER_PENDING;
               const isQuickOpen = expandedQuickAssignId === reminder.id || (isExec && isPending && expandedQuickAssignId === null && pagedReminders[0]?.id === reminder.id);
 

@@ -25,6 +25,10 @@ export function alertDestination(alert, role, canSplit = true) {
 }
 
 export function normalizeAmountInput(value) {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'number') {
+    return Number.isSafeInteger(value) && value >= 0 ? String(value) : null;
+  }
   const text = String(value ?? '').trim().replace(/\s*VND\s*$/i, '');
   if (!text) return '';
   // Accept plain digits and familiar thousands separators; never turn a minus
@@ -48,19 +52,27 @@ const formatQtyValue = value => value === null || value === undefined || !Number
   ? ''
   : new Intl.NumberFormat(locale(), { maximumFractionDigits: 3 }).format(value);
 
+/**
+ * F01 Fix:
+ * - Khi nhận kiểu number từ ô số Excel (ví dụ 1.234), giữ nguyên giá trị số thập phân 1.234 (tối đa 3 chữ số lẻ).
+ * - Khi nhận chuỗi người dùng nhập tay: dấu chấm tách hàng nghìn ("1.234" -> 1234), dấu phẩy là phần thập phân ("1,234" -> 1.234).
+ */
 export function inspectQuantityInput(value, { allowZero = true, max, unit = '' } = {}) {
   if (value === null || value === undefined) {
     return { raw: '', normalized: '', value: null, formatted: '', warning: '', error: '' };
   }
   if (typeof value === 'number') {
-    if (!Number.isFinite(value) || value < 0) {
+    const roundedMillis = Math.round(value * 1000);
+    const hasMoreThan3Decimals = Math.abs(value * 1000 - roundedMillis) > 1e-6;
+    if (!Number.isFinite(value) || value < 0 || hasMoreThan3Decimals) {
       return { raw: String(value), normalized: null, value: null, formatted: '', warning: '',
         error: 'Số phải không âm; dùng dấu chấm tách hàng nghìn (ví dụ 1.000) hoặc dấu phẩy cho phần thập phân (ví dụ 1,5).' };
     }
-    const formatted = formatQtyValue(value) + (unit ? ` ${unit}` : '');
-    const error = !allowZero && value <= 0 ? 'Số lượng đặt phải lớn hơn 0.' :
-      Number.isFinite(max) && value > max ? `Số lượng không được vượt ${formatQtyValue(max)}${unit ? ` ${unit}` : ''}.` : '';
-    return { raw: String(value), normalized: String(value), value, formatted, warning: '', error };
+    const cleanValue = roundedMillis / 1000;
+    const formatted = formatQtyValue(cleanValue) + (unit ? ` ${unit}` : '');
+    const error = !allowZero && cleanValue <= 0 ? 'Số lượng đặt phải lớn hơn 0.' :
+      Number.isFinite(max) && cleanValue > max ? `Số lượng không được vượt ${formatQtyValue(max)}${unit ? ` ${unit}` : ''}.` : '';
+    return { raw: String(cleanValue), normalized: String(cleanValue), value: cleanValue, formatted, warning: '', error };
   }
   const text = String(value).trim();
   if (!text) return { raw: '', normalized: '', value: null, formatted: '', warning: '', error: '' };
@@ -70,14 +82,16 @@ export function inspectQuantityInput(value, { allowZero = true, max, unit = '' }
 
   if (/^\d+$/.test(text)) {
     normalized = text.replace(/^0+(?=\d)/, '');
-  } else if (/^[1-9]\d{0,2}(?:\.\d{3})+$/.test(text) || /^[1-9]\d{0,2}(?:,\d{3})+$/.test(text) || /^[1-9]\d{0,2}(?: \d{3})+$/.test(text)) {
+  } else if (/^\d+,\d{1,3}$/.test(text)) {
+    normalized = String(Number(text.replace(',', '.')));
+  } else if (/^[1-9]\d{0,2}(?:\.\d{3})+,\d{1,3}$/.test(text)) {
+    normalized = String(Number(text.replace(/\./g, '').replace(',', '.')));
+  } else if (/^[1-9]\d{0,2}(?:\.\d{3})+$/.test(text) || /^[1-9]\d{0,2}(?: \d{3})+$/.test(text) || /^[1-9]\d{0,2}(?:,\d{3}){2,}$/.test(text)) {
     normalized = text.replace(/[. ,]/g, '');
-    if (/^[1-9]\d{0,2}[.,]\d{3}$/.test(text)) {
+    if (/^[1-9]\d{0,2}\.\d{3}$/.test(text)) {
       const parsed = Number(normalized);
       warning = `Hệ thống đang hiểu "${text}" là ${formatQtyValue(parsed)}${unit ? ` ${unit}` : ''} (dấu tách hàng nghìn). Nếu muốn nhập số lẻ thập phân, hãy dùng dấu phẩy (ví dụ 1,5).`;
     }
-  } else if (/^[1-9]\d{0,2}(?:\.\d{3})+,\d{1,3}$/.test(text)) {
-    normalized = String(Number(text.replace(/\./g, '').replace(',', '.')));
   } else if (/^[1-9]\d{0,2}(?:,\d{3})+\.\d{1,3}$/.test(text)) {
     normalized = String(Number(text.replace(/,/g, '')));
   } else if (/^[1-9]\d*[.,]\d{1,2}$/.test(text) && text.endsWith('0')) {
@@ -85,8 +99,6 @@ export function inspectQuantityInput(value, { allowZero = true, max, unit = '' }
       raw: text, normalized: null, value: null, formatted: '', warning: '',
       error: 'Cách viết số có chữ số 0 ở cuối dễ gây nhầm với hàng nghìn (ví dụ 1.000). Hãy nhập số nguyên hoặc đủ 3 chữ số hàng nghìn.',
     };
-  } else if (/^\d+,\d{1,3}$/.test(text) && !/^[1-9]\d{0,2},\d{3}$/.test(text)) {
-    normalized = String(Number(text.replace(',', '.')));
   } else if (/^\d+\.\d{1,3}$/.test(text) && !/^[1-9]\d{0,2}\.\d{3}$/.test(text)) {
     normalized = String(Number(text));
   }

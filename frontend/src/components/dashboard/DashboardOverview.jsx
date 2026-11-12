@@ -1,7 +1,7 @@
 import { t } from '../../locales/i18n.js';
 import React, { useState } from 'react';
 import { TrendingUp, Package, Wallet, CreditCard, ChevronRight, AlertTriangle, CheckCircle2, ArrowRight, BellRing, ClipboardPlus, Clock3 } from 'lucide-react';
-import { CategoryProgressChart, RevenueChart, DebtChart, CashPriorityChart } from './DashboardCharts.jsx';
+import { CategoryProgressChart, RevenueChart, DebtChart, CashPriorityChart } from './LazyCharts.jsx';
 import { formatMoney, formatMillions, sumBy } from '../../utils/dashboardMetrics.js';
 import FulfillmentTable from '../orders/FulfillmentTable.jsx';
 import { getRoleLayout, getSeverity, presentAlert } from '../../utils/dashboardPresentation.js';

@@ -2,18 +2,17 @@ import React from 'react';
 import { ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
 import { phrase, t } from '../../locales/i18n.js';
 
-/**
- * Thanh điều khiển Phân trang & Tải dần khi cuộn (Progressive Scroll + Page Switcher Bar).
- * - Đặt `sentinelRef` ngay dưới danh sách/bảng để tự động tải thêm dữ liệu khi người dùng lướt xuống.
- * - Khi người dùng bấm sang trang khác (Trang 1, 2, 3...), hàm `goToPage` lập tức xóa bộ đệm của trang cũ
- *   trên trình duyệt và gọi API giải phóng cache trang cũ trên máy chủ.
- */
 export default function ProgressivePaginationBar({
   pagination,
   itemUnit = 'mục',
   className = '',
 }) {
-  if (!pagination || pagination.totalItems === 0) return null;
+  if (!pagination) return null;
+  if (pagination.error) return <p role="alert">{t(pagination.error)}{' '}
+    <button type="button" onClick={pagination.retry}>{t('Thử lại')}</button>
+  </p>;
+  if (pagination.loading) return <p role="status">{t('Đang tải dữ liệu…')}</p>;
+  if (pagination.totalItems === 0) return null;
 
   const {
     currentPage,
@@ -33,12 +32,9 @@ export default function ProgressivePaginationBar({
   const startNumber = totalItems === 0 ? 0 : pageStartIndex + 1;
   const endNumber = pageStartIndex + visibleCount;
 
-  const pageNumbers = [];
-  for (let p = 1; p <= totalPages; p += 1) {
-    if (p === 1 || p === totalPages || Math.abs(p - currentPage) <= 1) {
-      pageNumbers.push(p);
-    }
-  }
+  const pageNumbers = [...new Set([1, currentPage - 1, currentPage, currentPage + 1, totalPages])]
+    .filter(page => page >= 1 && page <= totalPages)
+    .sort((a, b) => a - b);
 
   return (
     <div className={`progressive-pagination-wrapper ${className}`}>

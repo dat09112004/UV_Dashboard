@@ -6,16 +6,13 @@ import {
 } from '../../utils/workspaceUi.js';
 import { locale } from '../../locales/i18n.js';
 import { canReadSheet, ENTRY_SHEETS } from './schema.js';
-import { directoryProfiles, taskWorkspace } from '../users/services/demoDirectory.js';
+import { directoryProfiles, taskWorkspace } from '../users/services/directoryService.js';
 import { taskStatusAt } from '../operations/services/taskWorkflow.js';
 import {
-  fetchBootstrapApi,
-  fetchFinanceStateApi,
-  fetchOrdersApi,
   saveEntryBatchApi,
 } from '../../services/api.js';
 
-export const MAX_ENTRY_ROWS = 500;
+export const MAX_ENTRY_ROWS = 200;
 export const MONEY_COLUMNS = ['unitPriceVnd', 'netRevenue', 'originalAmount', 'amount'];
 export const QUANTITY_COLUMNS = ['orderedQty', 'nhap', 'deliveredQty', 'shippedQty'];
 export const PERCENT_COLUMNS = ['onProcessPct', 'packagingPct'];
@@ -36,28 +33,37 @@ export function parseQuantityInput(value, { optional = false, allowZero = true }
 }
 
 export function inspectEntryCell(columnKey, rawValue, rowValues = {}) {
-  const text = String(rawValue ?? '').trim();
+  if (rawValue === null || rawValue === undefined) {
+    return { normalized: '', value: null, formatted: '', warning: '', error: '' };
+  }
+  const isNumericValue = typeof rawValue === 'number';
+  const text = String(rawValue).trim();
   if (!text) return { normalized: '', value: null, formatted: '', warning: '', error: '' };
   if (MONEY_COLUMNS.includes(columnKey)) {
-    const normalized = normalizeAmountInput(text);
-    const error = amountInputError(text);
+    const input = isNumericValue ? rawValue : text;
+    const normalized = normalizeAmountInput(input);
+    const error = amountInputError(input);
     const value = normalized && !error ? Number(normalized) : null;
     const formatted = value !== null ? `${new Intl.NumberFormat(locale()).format(value)} VND` : '';
     const warning =
-      !error && /^[1-9]\d{0,2}[.,]\d{3}(?:\s*VND)?$/i.test(text)
+      !isNumericValue && !error && /^[1-9]\d{0,2}[.,]\d{3}(?:\s*VND)?$/i.test(text)
         ? `Hệ thống đang hiểu là ${formatted}.`
         : '';
     return { normalized, value, formatted, warning, error };
   }
   if (QUANTITY_COLUMNS.includes(columnKey)) {
     const unit = String(rowValues.unit || '').trim();
-    return inspectQuantityInput(text, { allowZero: columnKey !== 'orderedQty', unit });
+    // F01 Fix: Bảo toàn kiểu number khi giá trị đến từ ô số Excel (ví dụ 1.234)
+    return inspectQuantityInput(isNumericValue ? rawValue : text, {
+      allowZero: columnKey !== 'orderedQty',
+      unit,
+    });
   }
   if (PERCENT_COLUMNS.includes(columnKey)) {
     const cleaned = text
       .replace(/^(\d+(?:[.,]\d+)?)\s*%$/, '$1')
       .replace(/^(\d+),(\d+)$/, '$1.$2');
-    const num = /^\d+(?:\.\d+)?$/.test(cleaned) ? Number(cleaned) : Number.NaN;
+    const num = isNumericValue ? rawValue : /^\d+(?:\.\d+)?$/.test(cleaned) ? Number(cleaned) : Number.NaN;
     if (!Number.isFinite(num) || num < 0 || num > 100) {
       return {
         normalized: null,
@@ -99,38 +105,10 @@ export function readEntryRows(sheet, actor, { items = [], finance = {}, director
   return finance[sheet.id] || [];
 }
 
-/**
- * Lưu lô nhập liệu Excel (tối đa 500 dòng) trực tiếp lên Backend API (/api/v1/data-entry/sheets/:sheetId/batch).
- * Đã loại bỏ hoàn toàn DEMO_ORDERS và DEMO_FINANCE_BASE khỏi Frontend.
- */
-export async function saveEntryBatch(_actorId, sheetId, drafts, { orderBaseline, now } = {}) {
+export async function saveEntryBatch(_actorId, sheetId, drafts) {
   const sheet = ENTRY_SHEETS.find(item => item.id === sheetId);
   if (!sheet || !Array.isArray(drafts) || !drafts.length || drafts.length > MAX_ENTRY_ROWS) {
-    throw new Error('Chọn bảng và nhập từ 1 đến 500 dòng.');
+    throw new Error(`Chọn bảng và nhập từ 1 đến ${MAX_ENTRY_ROWS} dòng.`);
   }
-
-  const result = await saveEntryBatchApi(sheetId, drafts, { orderBaseline, now });
-  if (result.issues?.length) {
-    return result;
-  }
-
-  if (sheetId === 'orders') {
-    const ordersData = await fetchOrdersApi();
-    return {
-      items: ordersData.items || result.items || [],
-      ...(result.warnings ? { warnings: result.warnings } : {}),
-    };
-  }
-  if (sheetId === 'tasks') {
-    const directory = await fetchBootstrapApi();
-    return {
-      directory,
-      ...(result.warnings ? { warnings: result.warnings } : {}),
-    };
-  }
-  const finance = await fetchFinanceStateApi();
-  return {
-    finance: finance || result.finance,
-    ...(result.warnings ? { warnings: result.warnings } : {}),
-  };
+  return saveEntryBatchApi(sheetId, drafts);
 }

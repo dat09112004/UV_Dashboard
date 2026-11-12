@@ -19,7 +19,7 @@ export const REMINDER_RESOLVED = 'Đã xử lý';
 export const isTaskEmployee = user => user?.status === 'active' && Object.hasOwn(TASK_DEPARTMENTS, user.role);
 export const canReceiveTasks = user => isTaskEmployee(user) && canOpenSection(user, 'tasks');
 export const canAssignTasks = user => isExecutiveRole(user?.role) && canOpenSection(user, 'assignments');
-export const canSendReminders = user => Boolean(user?.status === 'active' && (isTaskEmployee(user) || isExecutiveRole(user.role)));
+export const canSendReminders = user => Boolean(user?.status === 'active' && (isTaskEmployee(user) || isExecutiveRole(user.role)) && canOpenSection(user, 'reminders'));
 
 export function canManageTask(user, task, users) {
   if (!task || !canAssignTasks(user)) return false;
@@ -44,15 +44,23 @@ export function taskStatusAt(task, today = businessToday()) {
 
 export function matchAlertTask(task, alertRef) {
   if (!task || !alertRef) return false;
-  if (task.sourceAlert) {
-    if (alertRef.id && task.sourceAlert.id === alertRef.id) return true;
-    if (alertRef.reference && task.sourceAlert.reference === alertRef.reference &&
-      (!alertRef.type || task.sourceAlert.type === alertRef.type)) return true;
-  }
+  if (task.sourceAlert) return matchesAlert(task.sourceAlert, alertRef);
   const ref = String(alertRef.reference || '').trim();
   if (!ref) return false;
   const hay = `${task.title || ''} ${task.description || ''}`;
   return hay.includes(ref);
+}
+
+function matchesAlert(source, target) {
+  if (target.type && source.type !== target.type) return false;
+  if (source.reference && target.reference) return source.reference === target.reference;
+  return Boolean(target.id && source.id === target.id);
+}
+
+export function reminderMatchesAlert(reminder, alertRef) {
+  return matchesAlert({
+    type: reminder.alertType || 'orders', id: reminder.alertId, reference: reminder.reference,
+  }, alertRef);
 }
 
 /**
@@ -82,17 +90,16 @@ export function resolveAlertAssignmentInfo(alertRef, tasks = [], accounts = [], 
   const activeTasks = matchedTasks.filter(task => task.currentStatus !== TASK_EXPIRED);
   const chosenTasks = activeTasks.length ? activeTasks : matchedTasks;
 
-  const matchedReminders = (reminders || []).filter(rem => {
-    if (alertRef.id && rem.alertId === alertRef.id) return true;
-    if (alertRef.reference && rem.reference === alertRef.reference && (!alertRef.type || rem.alertType === alertRef.type)) return true;
-    return false;
-  });
-  const pendingReminders = matchedReminders.filter(rem => rem.status === REMINDER_PENDING);
-  const lastReminder = matchedReminders.at(-1) || null;
+  const matchedReminders = (reminders || []).filter(reminder => reminderMatchesAlert(reminder, alertRef));
+  const pendingReminders = matchedReminders.filter(reminder => reminder.status === REMINDER_PENDING);
+  const reminderDate = reminder => reminder?.updatedAt || reminder?.createdAt || '';
+  const lastReminder = (pendingReminders.length ? pendingReminders : matchedReminders)
+    .reduce((latest, reminder) => reminderDate(reminder) >= reminderDate(latest) ? reminder : latest, null);
+  const reminderCount = pendingReminders.reduce((count, reminder) => count + (Number(reminder.remindCount) || 1), 0);
 
   if (!chosenTasks.length) {
     const reminderSuffix = pendingReminders.length > 0
-      ? ` · Đã nhắc sếp (${pendingReminders.length} lần, gần nhất bởi ${lastReminder?.senderName || 'nhân viên'})`
+      ? ` · Đã nhắc sếp (${reminderCount} lần, gần nhất bởi ${lastReminder?.senderName || 'nhân viên'})`
       : '';
     return {
       isAssigned: false,
@@ -432,47 +439,6 @@ export async function encodeTaskFiles(entries) {
     for (let i = 0; i < bytes.length; i += 8192) binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
     return { name: file.name, content: btoa(binary) };
   }));
-}
-
-const HANDOVER_DRAFT_PREFIX = 'uv-task-handover-draft-v1';
-const memoryHandoverDrafts = new Map();
-const draftKey = (actorId, taskId) => `${HANDOVER_DRAFT_PREFIX}:${actorId || 'anon'}:${taskId || 'none'}`;
-
-export function readTaskHandoverDraft(actorId, taskId, storage = globalThis.localStorage) {
-  if (!actorId || !taskId) return '';
-  const key = draftKey(actorId, taskId);
-  try {
-    const saved = storage?.getItem(key);
-    if (saved !== null && saved !== undefined) return String(saved);
-  } catch { /* Fall back to in-memory map when storage is blocked. */ }
-  return memoryHandoverDrafts.get(key) || '';
-}
-
-export function storeTaskHandoverDraft(actorId, taskId, note, storage = globalThis.localStorage) {
-  if (!actorId || !taskId) return false;
-  const key = draftKey(actorId, taskId);
-  const value = String(note ?? '');
-  if (!value.trim()) return clearTaskHandoverDraft(actorId, taskId, storage);
-  memoryHandoverDrafts.set(key, value);
-  try {
-    storage?.setItem(key, value);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-export function clearTaskHandoverDraft(actorId, taskId, storage = globalThis.localStorage) {
-  if (!actorId || !taskId) return false;
-  const key = draftKey(actorId, taskId);
-  memoryHandoverDrafts.delete(key);
-  try {
-    storage?.removeItem?.(key);
-    if (!storage?.removeItem && storage?.setItem) storage.setItem(key, '');
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 export function filterTaskRows(rows, {

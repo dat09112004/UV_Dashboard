@@ -41,7 +41,7 @@ export function getFulfillment(item, reportDate, { includeReceiptRisk = true } =
   const deliveredQty = numberOrNull(item.deliveredQty);
   const receivedPct = ratio(receivedQty, orderedQty);
   const deliveredPct = ratio(deliveredQty, orderedQty);
-  const receivedComplete = orderedQty > 0 && receivedQty >= orderedQty;
+  const receivedComplete = orderedQty > 0 && receivedQty !== null && receivedQty >= orderedQty;
   const deliveredComplete = orderedQty > 0 && deliveredQty !== null && deliveredQty >= orderedQty;
   const receiptDate = parseBusinessDate(item.expectedReceiptDate);
   const deliveryDate = parseBusinessDate(item.etaDate);
@@ -63,7 +63,7 @@ export function getFulfillment(item, reportDate, { includeReceiptRisk = true } =
   let label =
     orderedQty === null
       ? 'Chưa có SL đặt'
-      : receivedQty > 0
+      : receivedQty !== null && receivedQty > 0
         ? receivedComplete
           ? deliveredQty === null
             ? 'Đủ hàng, chưa xác nhận giao'
@@ -164,7 +164,8 @@ export function validateTracking(item, values, reportDate) {
   if (orderedQty !== null && deliveredQty !== null && deliveredQty > orderedQty) {
     throw new Error('Số đã giao khách không được vượt số lượng đặt.');
   }
-  if (deliveredQty !== null && deliveredQty > receivedQty + Number(item.tonDau || 0)) {
+  const safeReceivedQty = receivedQty ?? 0;
+  if (deliveredQty !== null && deliveredQty > safeReceivedQty + Number(item.tonDau || 0)) {
     throw new Error('Số đã giao vượt hàng có thể giao: tồn đầu + số đã về kho.');
   }
   const date = (value, label) => {

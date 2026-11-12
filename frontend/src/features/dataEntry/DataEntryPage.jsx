@@ -4,7 +4,6 @@ import { locale, phrase, t } from '../../locales/i18n.js';
 import { useDebouncedValue } from '../../hooks/useDebounce.js';
 import { useProgressivePagination } from '../../hooks/useProgressivePagination.js';
 import ProgressivePaginationBar from '../../components/common/ProgressivePaginationBar.jsx';
-import { releasePageCacheApi } from '../../services/api.js';
 import { businessToday, dateInputValue, parseBusinessDate } from '../../utils/business.js';
 import { formatQuantity } from '../../utils/orderFulfillment.js';
 import { computeProjectedProgress } from '../../utils/workspaceUi.js';
@@ -394,7 +393,7 @@ export default function DataEntryPage({ actor, data, onSave }) {
     const current = rows.filter(hasValues);
     const present = current.some(row => String(row.values.rowId ?? '') === String(order.rowId));
     if (!present && current.length >= MAX_ENTRY_ROWS) {
-      setIssues([{ message: 'Chọn bảng và nhập từ 1 đến 500 dòng.' }]);
+      setIssues([{ message: `Chọn bảng và nhập từ 1 đến ${MAX_ENTRY_ROWS} dòng.` }]);
       return;
     }
     const fields = ['rowId', 'poId', 'orderedQty', 'unit', 'nhap', 'deliveredQty', 'onProcessPct', 'packagingPct',
@@ -410,7 +409,7 @@ export default function DataEntryPage({ actor, data, onSave }) {
     event.preventDefault();
     const pasted = clipboardRows(text);
     if (rowIndex + pasted.length > MAX_ENTRY_ROWS || pasted.some(line => columnIndex + line.length > columns.length)) {
-      setIssues([{ message: 'Vùng dán vượt phạm vi bảng hoặc giới hạn 500 dòng.' }]);
+      setIssues([{ message: `Vùng dán vượt phạm vi bảng hoặc giới hạn ${MAX_ENTRY_ROWS} dòng.` }]);
       return;
     }
     const next = Array.from({ length: Math.max(rows.length, rowIndex + pasted.length) }, (_, index) => rows[index] || blankRow());
@@ -443,7 +442,7 @@ export default function DataEntryPage({ actor, data, onSave }) {
   const loadPreview = () => run(async () => {
     const next = readEntrySheet(importFile.book.getWorksheet(Number(worksheetId)), sheet, MAX_ENTRY_ROWS, year);
     const current = rows.filter(hasValues);
-    if (current.length + next.length > MAX_ENTRY_ROWS) throw new Error('Chọn bảng và nhập từ 1 đến 500 dòng.');
+    if (current.length + next.length > MAX_ENTRY_ROWS) throw new Error(`Chọn bảng và nhập từ 1 đến ${MAX_ENTRY_ROWS} dòng.`);
     setRows([...current, ...next]);
     setImportFile(null);
     setEditing(true);
@@ -469,7 +468,7 @@ export default function DataEntryPage({ actor, data, onSave }) {
   const stageQuickRow = (values, expectedVersion) => {
     const current = rows.filter(hasValues);
     if (current.length >= MAX_ENTRY_ROWS) {
-      setIssues([{ message: 'Chọn bảng và nhập từ 1 đến 500 dòng.' }]);
+      setIssues([{ message: `Chọn bảng và nhập từ 1 đến ${MAX_ENTRY_ROWS} dòng.` }]);
       return;
     }
     const entry = expectedVersion !== undefined ? { expectedVersion, values } : { values };
@@ -486,9 +485,6 @@ export default function DataEntryPage({ actor, data, onSave }) {
     <nav className="workflow-filter-tabs entry-tabs" aria-label={t('Bảng dữ liệu')}>
       {sheets.map(item => <button type="button" key={item.id} aria-pressed={item.id === sheet.id} disabled={pending}
         onClick={() => {
-          if (item.id !== sheet.id) {
-            releasePageCacheApi({ previousSection: 'data-entry', previousPage: pagination.currentPage });
-          }
           setSelectedId(item.id);
           setImportFile(null);
           setQuickMode(null);

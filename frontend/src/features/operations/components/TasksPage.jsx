@@ -5,50 +5,10 @@ import { useDebouncedValue } from '../../../hooks/useDebounce.js';
 import { useProgressivePagination } from '../../../hooks/useProgressivePagination.js';
 import ProgressivePaginationBar from '../../../components/common/ProgressivePaginationBar.jsx';
 import { businessToday, dateInputValue, parseBusinessDate } from '../../../utils/business.js';
-import { readTaskAttachment } from '../../users/services/demoDirectory.js';
+import { readTaskDraftApi, writeTaskDraftApi } from '../../../services/api.js';
+import { readTaskAttachment } from '../../users/services/directoryService.js';
 import { canDiscussTask, canManageTask, canViewManagedTask, canWorkOnAssignedTask, encodeTaskFiles, FILE_ACCEPT, canReceiveTasks,
   REMINDER_PENDING, taskStatusAt, TASK_ACTIVE, TASK_DEPARTMENTS, TASK_DONE, TASK_EXPIRED, TASK_EXPIRED_MESSAGE, TASK_NEW, TASK_REREVIEW, TASK_RETURNED, TASK_REVIEW } from '../services/taskWorkflow.js';
-
-const HANDOVER_DRAFT_PREFIX = 'uv-task-handover-draft-v1';
-const memoryHandoverDrafts = new Map();
-const draftKey = (actorId, taskId) => `${HANDOVER_DRAFT_PREFIX}:${actorId || 'anon'}:${taskId || 'none'}`;
-
-export function readTaskHandoverDraft(actorId, taskId, storage = globalThis.localStorage) {
-  if (!actorId || !taskId) return '';
-  const key = draftKey(actorId, taskId);
-  try {
-    const saved = storage?.getItem(key);
-    if (saved !== null && saved !== undefined) return String(saved);
-  } catch { /* Fall back to in-memory map when storage is blocked. */ }
-  return memoryHandoverDrafts.get(key) || '';
-}
-
-export function storeTaskHandoverDraft(actorId, taskId, note, storage = globalThis.localStorage) {
-  if (!actorId || !taskId) return false;
-  const key = draftKey(actorId, taskId);
-  const value = String(note ?? '');
-  if (!value.trim()) return clearTaskHandoverDraft(actorId, taskId, storage);
-  memoryHandoverDrafts.set(key, value);
-  try {
-    storage?.setItem(key, value);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-export function clearTaskHandoverDraft(actorId, taskId, storage = globalThis.localStorage) {
-  if (!actorId || !taskId) return false;
-  const key = draftKey(actorId, taskId);
-  memoryHandoverDrafts.delete(key);
-  try {
-    storage?.removeItem?.(key);
-    if (!storage?.removeItem && storage?.setItem) storage.setItem(key, '');
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 export function filterTaskRows(rows, {
   statusFilter = 'all',
@@ -155,6 +115,8 @@ export default function TasksPage({ tasks, reminders = [], accounts, actor, onAc
   const [creating, setCreating] = useState(false);
   const [today, setToday] = useState(businessToday);
   const [handoverDraft, setHandoverDraft] = useState('');
+  const [draftStatus, setDraftStatus] = useState('idle');
+  const draftSession = useRef(null);
   const [showCloseDraftPrompt, setShowCloseDraftPrompt] = useState(false);
   const [confirmingApprove, setConfirmingApprove] = useState(false);
   const [quickAssignReminderId, setQuickAssignReminderId] = useState(null);
@@ -197,7 +159,8 @@ export default function TasksPage({ tasks, reminders = [], accounts, actor, onAc
   const detailId = task?.id;
   const canManageSelected = canManageTask(actor, task, accounts);
   const canHandoverSelected = Boolean(task && !managing && [TASK_ACTIVE, TASK_RETURNED].includes(task.status));
-  const hasUnsentHandover = canHandoverSelected && handoverDraft.trim().length > 0;
+  const hasUnsentHandover = canHandoverSelected &&
+    (handoverDraft.trim().length > 0 || handoverDraft !== (draftSession.current?.saved ?? '') || (draftSession.current?.pending ?? 0) > 0);
   const person = accounts.find(account => account.id === task?.assigneeId);
   const assigner = accounts.find(account => account.id === task?.assignerId);
   const lastSubmission = task?.submissions?.at(-1);
@@ -216,14 +179,59 @@ export default function TasksPage({ tasks, reminders = [], accounts, actor, onAc
   }, []);
 
   useEffect(() => {
-    if (detailId && actor?.id) {
-      setHandoverDraft(readTaskHandoverDraft(actor.id, detailId));
-    } else {
-      setHandoverDraft('');
-    }
+    setHandoverDraft('');
+    setDraftStatus(canHandoverSelected ? 'loading' : 'idle');
     setShowCloseDraftPrompt(false);
     setConfirmingApprove(false);
-  }, [detailId, actor?.id]);
+    if (!detailId || !canHandoverSelected) return;
+    const controller = new AbortController();
+    const session = { id: detailId, version: null, saved: '', queue: Promise.resolve(), paused: false, pending: 0 };
+    draftSession.current = session;
+    readTaskDraftApi(detailId, controller.signal).then(result => {
+      if (controller.signal.aborted) return;
+      session.version = result.version;
+      session.saved = result.note;
+      setHandoverDraft(result.note);
+      setDraftStatus('ready');
+    }).catch(error => {
+      if (!controller.signal.aborted) {
+        setError(error.message);
+        setDraftStatus('failed');
+      }
+    });
+    return () => {
+      controller.abort();
+      clearTimeout(session.timer);
+      if (draftSession.current === session) draftSession.current = null;
+    };
+  }, [detailId, actor?.id, canHandoverSelected]);
+
+  const persistDraft = (session, note) => {
+    session.pending++;
+    const task = session.queue.catch(() => {}).then(async () => {
+      if (draftSession.current !== session || session.version === null || note === session.saved) return;
+      const result = await writeTaskDraftApi(session.id, note, session.version);
+      session.version = result.version;
+      session.saved = result.note;
+    }).finally(() => { session.pending--; });
+    session.queue = task;
+    return task;
+  };
+
+  useEffect(() => {
+    const session = draftSession.current;
+    if (!session || draftStatus !== 'ready' || session.paused) return;
+    session.timer = setTimeout(() => {
+      if (session.paused) return;
+      persistDraft(session, handoverDraft).catch(error => {
+        if (draftSession.current === session) {
+          setError(error.message);
+          setDraftStatus('failed');
+        }
+      });
+    }, 500);
+    return () => clearTimeout(session.timer);
+  }, [handoverDraft, draftStatus]);
 
   useEffect(() => {
     const dialog = detailRef.current;
@@ -246,7 +254,7 @@ export default function TasksPage({ tasks, reminders = [], accounts, actor, onAc
   };
 
   const requestCloseDetail = () => {
-    if (busy) return;
+    if (busy || draftStatus === 'saving') return;
     if (hasUnsentHandover) {
       setShowCloseDraftPrompt(true);
       return;
@@ -254,18 +262,25 @@ export default function TasksPage({ tasks, reminders = [], accounts, actor, onAc
     detailRef.current?.close();
   };
 
-  const keepDraftAndClose = () => {
-    if (actor?.id && task?.id) storeTaskHandoverDraft(actor.id, task.id, handoverDraft);
-    setShowCloseDraftPrompt(false);
-    detailRef.current?.close();
+  const closeDraft = async note => {
+    const session = draftSession.current;
+    if (!session) return;
+    session.paused = true;
+    clearTimeout(session.timer);
+    setDraftStatus('saving');
+    try {
+      if (session.version === null) throw new Error('Chưa tải được phiên bản bản nháp.');
+      await persistDraft(session, note);
+      setShowCloseDraftPrompt(false);
+      detailRef.current?.close();
+    } catch (error) {
+      session.paused = false;
+      setError(error.message);
+      setDraftStatus('failed');
+    }
   };
-
-  const discardDraftAndClose = () => {
-    if (actor?.id && task?.id) clearTaskHandoverDraft(actor.id, task.id);
-    setHandoverDraft('');
-    setShowCloseDraftPrompt(false);
-    detailRef.current?.close();
-  };
+  const keepDraftAndClose = () => closeDraft(handoverDraft);
+  const discardDraftAndClose = () => closeDraft('');
 
   const continueEditingDraft = () => {
     setShowCloseDraftPrompt(false);
@@ -275,7 +290,6 @@ export default function TasksPage({ tasks, reminders = [], accounts, actor, onAc
   const handleHandoverDraftChange = event => {
     const nextValue = event.target.value;
     setHandoverDraft(nextValue);
-    if (actor?.id && task?.id) storeTaskHandoverDraft(actor.id, task.id, nextValue);
   };
 
   const submitQuickAssignFromReminder = async (event, reminder) => {
@@ -311,6 +325,14 @@ export default function TasksPage({ tasks, reminders = [], accounts, actor, onAc
       if (await onAction(action, { id, note: data.get('note') }, reportError)) form.reset();
       return;
     }
+    const session = action === 'handover' ? draftSession.current : null;
+    if (session?.paused) return;
+    if (session) {
+      session.paused = true;
+      clearTimeout(session.timer);
+      await session.queue.catch(() => {});
+    }
+    let submitted = false;
     try {
       const files = await encodeTaskFiles(data.getAll('files'));
       if (!await onAction(action, {
@@ -318,6 +340,7 @@ export default function TasksPage({ tasks, reminders = [], accounts, actor, onAc
         ...(isCreate && alertDraft && { sourceAlert: alertDraft.sourceAlert }),
       },
         reportError)) return;
+      submitted = true;
       if (isCreate) {
         dialogRef.current?.close();
         setFormVersion(version => version + 1);
@@ -325,7 +348,6 @@ export default function TasksPage({ tasks, reminders = [], accounts, actor, onAc
       } else if (action === 'assign') {
         setEditingId(null);
       } else if (action === 'handover') {
-        if (actor?.id && id) clearTaskHandoverDraft(actor.id, id);
         setHandoverDraft('');
         setShowCloseDraftPrompt(false);
         form.reset();
@@ -336,12 +358,27 @@ export default function TasksPage({ tasks, reminders = [], accounts, actor, onAc
       reportError(err.message);
     } finally {
       if (isCreate) setCreating(false);
+      if (session) {
+        session.paused = false;
+        if (!submitted && draftSession.current === session && draftStatus === 'ready') {
+          persistDraft(session, String(data.get('note') ?? '')).catch(error => {
+            if (draftSession.current !== session) return;
+            setError(error.message);
+            setDraftStatus('failed');
+          });
+        }
+      }
     }
   };
 
   const review = async approve => {
     setError('');
-    const ok = await onAction('confirm', { id: task.id, approve, submissionCount: task.submissions?.length || 0 }, setError);
+    const ok = await onAction('confirm', {
+      id: task.id,
+      approve,
+      assignmentEpoch: task.assignmentEpoch ?? 1,
+      submissionCount: task.submissions?.length || 0,
+    }, setError);
     if (ok) setConfirmingApprove(false);
     return ok;
   };
@@ -591,8 +628,6 @@ export default function TasksPage({ tasks, reminders = [], accounts, actor, onAc
           <tbody>{pagedRows.map(row => {
             const contact = accounts.find(account => account.id === (managing ? row.assigneeId : row.assignerId));
             const hasFiles = row.fileIds?.length || row.submissions?.some(entry => entry.fileIds?.length);
-            const hasSavedDraft = !managing && [TASK_ACTIVE, TASK_RETURNED].includes(row.status) &&
-              Boolean(readTaskHandoverDraft(actor?.id, row.id).trim());
             return <tr key={row.id} data-tone={taskTone(row.status)} onClick={() => openTask(row.id)}>
               <td className="task-summary">
                 <button className="task-row-open" type="button" aria-haspopup="dialog">
@@ -601,7 +636,6 @@ export default function TasksPage({ tasks, reminders = [], accounts, actor, onAc
                 <small className="task-description">{t(row.description)}</small>
                 {row.managerNote && <small className="italic text-sky-800 mt-0.5 block">{t('Ghi chú chỉ đạo:')} “{row.managerNote}”</small>}
                 {row.sourceAlert && <span className="task-alert-source">{t('Báo động đỏ')} · {row.sourceAlert.reference}</span>}
-                {hasSavedDraft && <span className="task-draft-badge">{t('Đang có bản nháp')}</span>}
                 {row.status === TASK_REREVIEW && <small>
                   {phrase('Nộp lại lần §', row.reviews.filter(entry => entry.approve === false).length)}
                 </small>}
@@ -620,7 +654,7 @@ export default function TasksPage({ tasks, reminders = [], accounts, actor, onAc
     </section>
     <dialog className="assignment-dialog task-detail-dialog" ref={detailRef} aria-labelledby="task-detail-title"
       onCancel={event => {
-        if (busy) { event.preventDefault(); return; }
+        if (busy || draftStatus === 'saving') { event.preventDefault(); return; }
         if (hasUnsentHandover) {
           event.preventDefault();
           setShowCloseDraftPrompt(true);
@@ -642,8 +676,9 @@ export default function TasksPage({ tasks, reminders = [], accounts, actor, onAc
             <p>{t('Bạn đang soạn kết quả bàn giao cho công việc này. Hãy chọn cách xử lý trước khi đóng:')}</p>
             <div className="workflow-footer task-draft-actions">
               <button type="button" className="primary" onClick={continueEditingDraft}>{t('Tiếp tục soạn')}</button>
-              <button type="button" className="row-detail-button" onClick={keepDraftAndClose}>{t('Giữ bản nháp')}</button>
-              <button type="button" className="task-return-button" onClick={discardDraftAndClose}>{t('Bỏ thay đổi')}</button>
+              <button type="button" className="row-detail-button" disabled={draftStatus === 'saving'} onClick={keepDraftAndClose}>{t('Giữ bản nháp')}</button>
+              <button type="button" className="task-return-button" disabled={draftStatus === 'saving'} onClick={discardDraftAndClose}>{t('Bỏ bản nháp')}</button>
+              {draftStatus === 'failed' && <button type="button" onClick={() => detailRef.current?.close()}>{t('Đóng để tải lại bản nháp')}</button>}
             </div>
           </section>}
           {task.status === TASK_EXPIRED && <div className="task-notice" data-tone="returned" role="status">
@@ -673,10 +708,10 @@ export default function TasksPage({ tasks, reminders = [], accounts, actor, onAc
             <form className="workflow-form task-result" onSubmit={event => submit(event, 'handover', task.id)}>
               <h4>{t(task.status === TASK_RETURNED ? 'Nộp lại kết quả' : 'Nộp kết quả hoàn thành')}</h4>
               <label>{t('Kết quả bàn giao')} <span className="required-mark" aria-hidden="true">*</span>
-                <textarea ref={handoverTextareaRef} name="note" required maxLength={1000} value={handoverDraft} onChange={handleHandoverDraftChange} />
+                <textarea ref={handoverTextareaRef} name="note" required maxLength={1000} value={handoverDraft} disabled={draftStatus === 'loading' || draftStatus === 'saving'} onChange={handleHandoverDraftChange} />
               </label>
               {hasUnsentHandover && <small className="management-note task-draft-status" role="status">
-                {t('Bản nháp đang được tự động lưu theo công việc và tài khoản của bạn.')}
+                {t(draftStatus === 'failed' ? 'Chưa đồng bộ được bản nháp.' : 'Bản nháp tự động đồng bộ với máy chủ.')}
               </small>}
               <FileField label="Tệp kết quả" required={task.requiresFile} />
               <div className="workflow-footer">
