@@ -10,18 +10,23 @@ import {
 
 import { useDebouncedValue } from './hooks/useDebounce.js';
 import { useRemotePage } from './hooks/useRemotePage.js';
-import { fetchOrderCollection, fetchOrderHistory } from './features/orders/services/ordersService.js';
+import { fetchOrdersPage, fetchOrderCollection, fetchOrderHistory } from './features/orders/services/ordersService.js';
 import { can, canOpenSection, homeSection, isExecutiveRole } from './utils/roles.js';
 import { createEmptyDirectoryState, directoryProfiles, refreshDirectoryFromApi, saveDirectoryAction, taskWorkspace } from './features/users/services/directoryService.js';
 import { canAssignTasks, isTaskEmployee, REMINDER_PENDING } from './features/operations/services/taskWorkflow.js';
 import { saveEntryBatch } from './features/dataEntry/service.js';
 import { clearEntryDrafts } from './features/dataEntry/drafts.js';
-import { signIn } from './features/auth/services/authService.js';
+import { signIn, restoreSessionOnLoad } from './features/auth/services/authService.js';
 import {
   abortAllPageRequests,
+  clearAuthToken,
   executeFinanceActionApi,
+  isFinanceSnapshotPayload,
   logoutApi,
   updateOrderProgressApi, fetchOrdersApi, fetchFinanceStateApi, fetchOrderDetailApi, fetchTermsPolicyApi,
+  getStoredAuthSession,
+  LOGOUT_BROADCAST_KEY,
+  parseCrossTabLogoutPayload,
   SESSION_EXPIRED_EVENT,
 } from './services/api.js';
 import AppHeader, { NAV_ITEMS } from './components/layout/AppHeader.jsx';
@@ -36,7 +41,7 @@ import DebtStatusOverview from './components/finance/DebtStatusOverview.jsx';
 import DebtDetailPanel from './components/finance/DebtDetailPanel.jsx';
 import { getRoleLayout, presentAlert } from './utils/dashboardPresentation.js';
 import { alertDestination, payableAction } from './utils/workspaceUi.js';
-import { InvoiceForm, ReceiptWorkspace, PayableForm, SplitPayableForm, FinanceHistory } from './components/finance/FinanceForms.jsx';
+import { InvoiceForm, ReceivableCrudForm, PayableCrudForm, ReceiptWorkspace, PayableForm, SplitPayableForm, FinanceHistory } from './components/finance/FinanceForms.jsx';
 import { initialFinanceState, unallocatedTotal, payableWorkflowStatus, itemFinancialSummary, businessToday, AP_REVIEW, AP_PENDING, AP_APPROVED, AP_RETURNED, AP_SPLIT_REQUIRED } from './utils/financeWorkflow.js';
 import { setClientIdentity } from './utils/permissions.js';
 import { loadTrackedItems, getFulfillment, formatPercent, matchesFulfillment } from './utils/orderFulfillment.js';
@@ -45,13 +50,16 @@ const DataEntryPage = lazy(() => import('./features/dataEntry/DataEntryPage.jsx'
 const TasksPage = lazy(() => import('./features/operations/components/TasksPage.jsx'));
 const RemindersPage = lazy(() => import('./features/operations/components/RemindersPage.jsx'));
 const BRAND_LOGO = '/logo.png';
+const EMPTY_LIST = Object.freeze([]);
 const LOCKED_ACCOUNT_MESSAGE = 'Tài khoản đã bị khóa. Vui lòng liên hệ quản trị viên để mở khóa.';
 const TERMS_REQUIRED_MESSAGE = 'Vui lòng tích chọn đồng ý Chính sách bảo mật và Điều khoản sử dụng trước khi đăng nhập.';
 const matchesSearch = (value, query) => typeof value === 'string' &&
   (value.toLowerCase().includes(query) || translate(value, 'en').toLowerCase().includes(query));
 const createEmptyFinance = () => initialFinanceState([], [], [], businessToday());
 const panelSection = panel => ({
-  ITEM_DETAIL: 'orders', RECORD_REV: 'revenue', ALLOCATE_AR: 'receivables',
+  ITEM_DETAIL: 'orders', RECORD_REV: 'revenue',
+  ALLOCATE_AR: 'receivables', CREATE_AR: 'receivables', EDIT_AR: 'receivables',
+  CREATE_AP: 'payables', EDIT_AP: 'payables',
   SPLIT_AP: 'payables', SUBMIT_AP: 'payables', REVIEW_AP: 'payables', PAY_AP: 'payables',
 })[panel.type] || panel.debtType;
 const canOpenPanel = (user, panel) => canOpenSection(user, panelSection(panel)) &&
@@ -75,7 +83,8 @@ export default function App() {
   }, [language]);
 
   // Authentication & Login State
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const initialStoredSession = useMemo(() => getStoredAuthSession(), []);
+  const [isAuthenticated, setIsAuthenticated] = useState(() => Boolean(initialStoredSession?.hasSession || initialStoredSession?.token));
   const [loginEmail, setLoginEmail] = useState(() => { try { return localStorage.getItem('uv-remembered-email') || ''; } catch { return ''; } });
   const [loginPassword, setLoginPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -101,8 +110,17 @@ export default function App() {
   }, [policyAttempt]);
   const [forgotPasswordSent, setForgotPasswordSent] = useState(false);
 
-  const [currentAccountId, setCurrentAccountId] = useState(null);
-  const [directory, setDirectory] = useState(createEmptyDirectoryState);
+  const [currentAccountId, setCurrentAccountId] = useState(() => initialStoredSession?.accountId || initialStoredSession?.account?.id || null);
+  const [isRestoringSession, setIsRestoringSession] = useState(() => Boolean(initialStoredSession?.hasSession || initialStoredSession?.token));
+  const [sessionRestoreAttempt, setSessionRestoreAttempt] = useState(0);
+  const [sessionRestoreError, setSessionRestoreError] = useState('');
+  const [directory, setDirectory] = useState(() => {
+    const base = createEmptyDirectoryState();
+    if (initialStoredSession?.account) {
+      base.accounts = [initialStoredSession.account];
+    }
+    return base;
+  });
   const accounts = useMemo(() => directoryProfiles(directory), [directory]);
   const currentUser = accounts.find(account => account.id === currentAccountId && account.status === 'active') || null;
   const currentRole = currentUser?.role;
@@ -112,6 +130,9 @@ export default function App() {
   const showReceivables = canOpenSection(currentUser, 'receivables');
   const showPayables = canOpenSection(currentUser, 'payables');
   const showReminders = canOpenSection(currentUser, 'reminders');
+  const canRemindBoss = showReminders && currentRole !== 'CEO';
+  const canManageArCrud = showReceivables && (can(currentUser, 'receivables.allocate') || can(currentUser, 'revenue.create'));
+  const canManageApCrud = showPayables && (can(currentUser, 'payables.submit') || can(currentUser, 'payables.approve'));
   const fullReport = showOrders && showRevenue && showReceivables && showPayables;
   const [selectedSection, setActiveSection] = useState('overview');
   const activeSection = canOpenSection(currentUser, selectedSection) ? selectedSection : homeSection(currentUser);
@@ -123,20 +144,69 @@ export default function App() {
   const directorySaving = useRef(false);
   const entrySaving = useRef(false);
 
-  const allDirectoryTasks = useMemo(() => directory?.tasks || [], [directory]);
-  const allReminders = useMemo(() => directory?.reminders || [], [directory]);
+  const allDirectoryTasks = Array.isArray(directory?.tasks) ? directory.tasks : EMPTY_LIST;
+  const allReminders = Array.isArray(directory?.reminders) ? directory.reminders : EMPTY_LIST;
   const pendingRemindersCount = useMemo(
     () => allReminders.filter(r => r.status === REMINDER_PENDING).length,
     [allReminders],
   );
 
   useEffect(() => {
+    let active = true;
+    if (!getStoredAuthSession()) {
+      setIsRestoringSession(false);
+      setSessionRestoreError('');
+      return;
+    }
+    setIsRestoringSession(true);
+    setSessionRestoreError('');
+    restoreSessionOnLoad()
+      .then(restored => {
+        if (!active) return;
+        if (restored.status === 'authenticated' && restored.account) {
+          setSessionRestoreError('');
+          setDirectoryError('');
+          if (restored.directory) setDirectory(restored.directory);
+          setCurrentAccountId(prevId => {
+            if (prevId !== restored.account.id) setDataRevision(v => v + 1);
+            return restored.account.id;
+          });
+          setActiveSection(restored.homeSection || homeSection(restored.account));
+          setIsAuthenticated(true);
+        } else if (restored.status === 'transient_error') {
+          const msg = restored.message || 'Kết nối tạm thời gián đoạn khi khôi phục phiên. Vui lòng thử lại.';
+          setSessionRestoreError(msg);
+          setDirectoryError(msg);
+        } else if (restored.status === 'expired' || restored.status === 'anonymous') {
+          setSessionRestoreError('');
+          setCurrentAccountId(null);
+          setIsAuthenticated(false);
+          if (restored.status === 'expired') {
+            setLoginNotice('Phiên đăng nhập đã hết hạn theo thời gian bảo mật. Vui lòng đăng nhập lại.');
+          }
+        }
+      })
+      .catch(err => {
+        if (!active) return;
+        const msg = err?.message || 'Không thể kết nối máy chủ để khôi phục phiên đăng nhập.';
+        setSessionRestoreError(msg);
+        setDirectoryError(msg);
+      })
+      .finally(() => {
+        if (active) setIsRestoringSession(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [sessionRestoreAttempt]);
+
+  useEffect(() => {
     setClientIdentity(currentUser);
-    if (currentAccountId && !currentUser) {
+    if (!isRestoringSession && currentAccountId && !currentUser && !sessionRestoreError) {
       setCurrentAccountId(null);
       setIsAuthenticated(false);
     }
-  }, [currentUser, currentAccountId]);
+  }, [currentUser, currentAccountId, isRestoringSession, sessionRestoreError]);
 
   const [orderView, setOrderView] = useState('fulfillment');
   const [orderFilter, setOrderFilter] = useState('all');
@@ -144,6 +214,8 @@ export default function App() {
   const [debtFilter, setDebtFilter] = useState('all');
   const [payableWorkflowFilter, setPayableWorkflowFilter] = useState('all');
   const [isExporting, setIsExporting] = useState(false);
+  const exportAbortRef = useRef(null);
+  useEffect(() => () => exportAbortRef.current?.abort(), [isAuthenticated, currentAccountId]);
 
   // Filter States + Debounced Search & Filter States
   const [selectedCategory, setSelectedCategory] = useState('Tất cả ngành hàng');
@@ -151,46 +223,99 @@ export default function App() {
   const [onlyMyRoleRedAlerts, setOnlyMyRoleRedAlerts] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
-  const debouncedSearchQuery = useDebouncedValue(searchQuery, 300);
-  const debouncedCategory = useDebouncedValue(selectedCategory, 150);
-  const debouncedOrigin = useDebouncedValue(selectedOrigin, 150);
-  const debouncedDebtFilter = useDebouncedValue(debtFilter, 150);
-  const debouncedPayableWorkflowFilter = useDebouncedValue(payableWorkflowFilter, 150);
-  const debouncedOrderFilter = useDebouncedValue(orderFilter, 150);
+  const debouncedSearchQuery = useDebouncedValue(searchQuery, 250);
+  const debouncedCategory = selectedCategory;
+  const debouncedOrigin = selectedOrigin;
+  const debouncedDebtFilter = debtFilter;
+  const debouncedPayableWorkflowFilter = payableWorkflowFilter;
+  const debouncedOrderFilter = orderFilter;
 
   // Dữ liệu nghiệp vụ được nạp khi mở phân hệ có quyền.
   const [vendorItems, setVendorItems] = useState([]);
+  const [ordersHasMore, setOrdersHasMore] = useState(false);
+  const [ordersNextCursor, setOrdersNextCursor] = useState(null);
+  const [ordersIncomplete, setOrdersIncomplete] = useState(false);
+  const [ordersLoading, setOrdersLoading] = useState(false);
   const [finance, setFinance] = useState(createEmptyFinance);
   const [financeLoaded, setFinanceLoaded] = useState(false);
   const [dataRevision, setDataRevision] = useState(0);
   const [dataError, setDataError] = useState('');
+  const [ordersWarning, setOrdersWarning] = useState('');
   const [dataLoading, setDataLoading] = useState(false);
   const dataPanel = ['overview', 'orders', 'revenue', 'receivables', 'payables', 'data-entry', 'reminders'].includes(activeSection);
   const loadOrders = showOrders && dataPanel;
   const loadFinance = (showRevenue || showReceivables || showPayables) && dataPanel;
 
+  // Mục 08 & QA12 Fix: Tách tải PO thành useEffect hoàn toàn độc lập với Finance;
+  // nối tiếp trực tiếp từ cursor của trang đầu tiên (initialItems: firstPage.items, startCursor: firstPage.nextCursor)
+  // nên 100 PO chỉ tốn 1 request và 1.001 PO chỉ tốn đúng 11 request (không tải lặp trang 1!).
   useEffect(() => {
-    if (!isAuthenticated || (!loadOrders && !loadFinance)) return;
+    if (!isAuthenticated || !loadOrders) return;
+    const controller = new AbortController();
+    setOrdersLoading(true);
+    setOrdersWarning('');
+    setOrdersIncomplete(false);
+    fetchOrdersPage({ view: 'reference', limit: 100 }, controller.signal)
+      .then(async firstPage => {
+        if (controller.signal.aborted) return;
+        if (!firstPage.hasMore || firstPage.nextCursor === null) {
+          setVendorItems(loadTrackedItems(firstPage.items));
+          setOrdersHasMore(false);
+          setOrdersNextCursor(null);
+          setOrdersIncomplete(false);
+          return;
+        }
+        setOrdersHasMore(true);
+        setOrdersNextCursor(firstPage.nextCursor);
+        const allItems = await fetchOrderCollection(controller.signal, {
+          maxPages: 100,
+          limit: 100,
+          initialItems: firstPage.items,
+          startCursor: firstPage.nextCursor,
+        });
+        if (controller.signal.aborted) return;
+        setVendorItems(loadTrackedItems(allItems));
+        setOrdersHasMore(false);
+        setOrdersNextCursor(null);
+        setOrdersIncomplete(false);
+      })
+      .catch(err => {
+        if (controller.signal.aborted) return;
+        if (Array.isArray(err?.partialItems) && err.partialItems.length > 0) {
+          setVendorItems(loadTrackedItems(err.partialItems));
+        }
+        setOrdersNextCursor(err?.nextCursor ?? null);
+        setOrdersIncomplete(true);
+        setOrdersWarning(err.message || 'Chưa tải đủ toàn bộ danh sách PO.');
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setOrdersLoading(false);
+      });
+    return () => controller.abort();
+  }, [isAuthenticated, currentAccountId, loadOrders, dataRevision]);
+
+  // Mục 08 Fix: Tách tải trạng thái tài chính (Finance) hoàn toàn độc lập với tiến trình tải PO
+  useEffect(() => {
+    if (!isAuthenticated || !loadFinance) return;
     const controller = new AbortController();
     setDataLoading(true);
     setDataError('');
-    Promise.all([
-      loadOrders ? fetchOrderCollection(controller.signal) : [],
-      loadFinance ? fetchFinanceStateApi({}, controller.signal) : null,
-    ]).then(([items, state]) => {
-      if (controller.signal.aborted) return;
-      setVendorItems(loadTrackedItems(items));
-      if (state) {
-        setFinance(state);
-        setFinanceLoaded(true);
-      }
-    }).catch(error => {
-      if (!controller.signal.aborted) setDataError(error.message);
-    }).finally(() => {
-      if (!controller.signal.aborted) setDataLoading(false);
-    });
+    fetchFinanceStateApi({}, controller.signal)
+      .then(state => {
+        if (controller.signal.aborted) return;
+        if (state && isFinanceSnapshotPayload(state)) {
+          setFinance(state);
+          setFinanceLoaded(true);
+        }
+      })
+      .catch(error => {
+        if (!controller.signal.aborted) setDataError(error.message);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setDataLoading(false);
+      });
     return () => controller.abort();
-  }, [isAuthenticated, currentAccountId, loadOrders, loadFinance, dataRevision]);
+  }, [isAuthenticated, currentAccountId, loadFinance, dataRevision]);
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -207,20 +332,49 @@ export default function App() {
       setWorkspacePanel(null);
       setLoginNotice('Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.');
     };
+    const handleCrossTabLogout = event => {
+      if (event.key !== LOGOUT_BROADCAST_KEY || !event.newValue) return;
+      const payload = parseCrossTabLogoutPayload(event.newValue);
+      if (payload?.accountId && currentAccountId && payload.accountId !== currentAccountId) return;
+      exportAbortRef.current?.abort();
+      orderDetailRequest.current?.abort();
+      clearAuthToken();
+      clearEntryDrafts(currentAccountId);
+      setIsAuthenticated(false);
+      setCurrentAccountId(null);
+      setDirectory(createEmptyDirectoryState());
+      setDirectoryError('');
+      setVendorItems([]);
+      setFinance(createEmptyFinance());
+      setFinanceLoaded(false);
+      setWorkspaceDirty(false);
+      setWorkspacePanel(null);
+      setLoginNotice(
+        payload?.serverRevoked === false
+          ? 'Phiên đăng nhập đã được đóng ở một tab khác (máy chủ chưa xác nhận thu hồi).'
+          : 'Phiên đăng nhập đã được đăng xuất ở một tab khác.'
+      );
+    };
     window.addEventListener(SESSION_EXPIRED_EVENT, expire);
-    return () => window.removeEventListener(SESSION_EXPIRED_EVENT, expire);
+    window.addEventListener('storage', handleCrossTabLogout);
+    return () => {
+      window.removeEventListener(SESSION_EXPIRED_EVENT, expire);
+      window.removeEventListener('storage', handleCrossTabLogout);
+    };
   }, [isAuthenticated, currentAccountId]);
-  const { revenue: revenueRecords, receivables, payables } = finance;
-  const unallocatedCash = unallocatedTotal(finance);
+  const revenueRecords = Array.isArray(finance?.revenue) ? finance.revenue : EMPTY_LIST;
+  const receivables = Array.isArray(finance?.receivables) ? finance.receivables : EMPTY_LIST;
+  const payables = Array.isArray(finance?.payables) ? finance.payables : EMPTY_LIST;
+  const unallocatedCash = Array.isArray(finance?.receipts) ? unallocatedTotal(finance) : 0;
 
   // Centered workspace dialog with optional full-screen mode.
   const [workspacePanel, setWorkspacePanel] = useState(null);
   const orderDetailRequest = useRef(null);
   const workspaceDebt = workspacePanel?.data?.id
-    ? (workspacePanel.debtType === 'receivables' || workspacePanel.type === 'ALLOCATE_AR'
+    ? (workspacePanel.debtType === 'receivables' || ['ALLOCATE_AR', 'EDIT_AR'].includes(workspacePanel.type)
       ? receivables : payables).find(row => row.id === workspacePanel.data.id)
     : null;
-  const needsDebtRecord = ['SPLIT_AP', 'SUBMIT_AP', 'REVIEW_AP', 'PAY_AP'].includes(workspacePanel?.type) ||
+  const needsDebtRecord = ['SPLIT_AP', 'SUBMIT_AP', 'REVIEW_AP', 'PAY_AP', 'EDIT_AR', 'EDIT_AP'].includes(workspacePanel?.type) ||
     (workspacePanel?.type === 'ALLOCATE_AR' && workspacePanel.data?.id);
   const [isFullScreenPanel, setIsFullScreenPanel] = useState(false);
   useEffect(() => {
@@ -449,8 +603,8 @@ export default function App() {
   [classifiedItems, classifiedAr, classifiedAp, showRevenue, revenueRecords]);
   const categoryStats = useMemo(() => summarizeCategories(sortedVendorItems, sortedRevenueRecords, classifiedAr, orderCategories),
     [sortedVendorItems, sortedRevenueRecords, classifiedAr, orderCategories]);
-  const visibleFinanceHistory = finance.audit.filter(row => row.type.startsWith('INVOICE') ? showRevenue :
-    row.type.startsWith('RECEIPT') ? showReceivables : row.type.startsWith('PAYABLE') && showPayables);
+  const visibleFinanceHistory = (Array.isArray(finance?.audit) ? finance.audit : []).filter(row => row?.type?.startsWith('INVOICE') ? showRevenue :
+    (row?.type?.startsWith('RECEIPT') || row?.type?.startsWith('RECEIVABLE')) ? showReceivables : row?.type?.startsWith('PAYABLE') && showPayables);
   const arSummary = useMemo(() => debtSummary(sortedReceivables), [sortedReceivables]);
   const apSummary = useMemo(() => debtSummary(sortedPayables), [sortedPayables]);
   const alerts = useMemo(() => buildAlertQueue(sortedVendorItems, sortedReceivables, sortedPayables, { includeWarnings: true }), [sortedVendorItems, sortedReceivables, sortedPayables]);
@@ -467,17 +621,17 @@ export default function App() {
     red: onlyMyRoleRedAlerts ? 'true' : '',
   };
   const productionPagination = useRemotePage(fetchOrdersApi, pageFilters,
-    isAuthenticated && activeSection === 'orders' && orderView === 'production', dataRevision);
+    isAuthenticated && activeSection === 'orders' && orderView === 'production', dataRevision, 10, currentAccountId);
   const revenuePagination = useRemotePage(fetchFinanceStateApi, {
     ...pageFilters, section: 'revenue', compact: true,
-  }, isAuthenticated && activeSection === 'revenue', dataRevision);
+  }, isAuthenticated && activeSection === 'revenue', dataRevision, 10, currentAccountId);
   const arPagination = useRemotePage(fetchFinanceStateApi, {
     ...pageFilters, section: 'receivables', compact: true, filter: debouncedDebtFilter,
-  }, isAuthenticated && activeSection === 'receivables', dataRevision);
+  }, isAuthenticated && activeSection === 'receivables', dataRevision, 10, currentAccountId);
   const apPagination = useRemotePage(fetchFinanceStateApi, {
     ...pageFilters, section: 'payables', compact: true,
     filter: debouncedDebtFilter, workflow: debouncedPayableWorkflowFilter,
-  }, isAuthenticated && activeSection === 'payables', dataRevision);
+  }, isAuthenticated && activeSection === 'payables', dataRevision, 10, currentAccountId);
 
   const onNavigate = (section, filter = 'all', query) => {
     if (entrySaving.current) {
@@ -507,7 +661,7 @@ export default function App() {
     });
   };
   const remindWorkAlert = alert => {
-    if (!alert || !showReminders) return;
+    if (!alert || !canRemindBoss) return;
     const view = presentAlert(alert, currentRole);
     setWorkspacePanel(null);
     setReminderDraft({
@@ -547,6 +701,14 @@ export default function App() {
   };
   const handleExport = async () => {
     if (isExporting || !fullReport) return;
+    // Mục 07 Fix: Chặn xuất báo cáo khi danh sách PO đang tải dở
+    if (showOrders && ordersLoading) {
+      showToast('Đang tải danh sách đơn hàng PO, vui lòng đợi hoàn tất trước khi xuất báo cáo.', 'error');
+      return;
+    }
+    exportAbortRef.current?.abort();
+    const exportController = new AbortController();
+    exportAbortRef.current = exportController;
     setIsExporting(true);
     try {
       // X01 & X02 Fix: Chụp snapshot toàn bộ dữ liệu và bộ lọc tại thời điểm bấm xuất Excel,
@@ -563,16 +725,52 @@ export default function App() {
       const snapshotOrderFilter = debouncedOrderFilter;
       const snapshotLanguage = language;
 
+      let baseExportItems = sortedVendorItems;
+      if (showOrders && (ordersHasMore || ordersIncomplete)) {
+        try {
+          const allRaw = await fetchOrderCollection(exportController.signal, {
+            maxPages: 100,
+            limit: 100,
+            ...(ordersNextCursor !== null && vendorItems.length > 0
+              ? { initialItems: vendorItems, startCursor: ordersNextCursor }
+              : {}),
+          });
+          const trackedAll = loadTrackedItems(allRaw);
+          setVendorItems(trackedAll);
+          setOrdersHasMore(false);
+          setOrdersNextCursor(null);
+          setOrdersIncomplete(false);
+          setOrdersWarning('');
+          const allClassified = trackedAll.map(row => classifyProgress(row, snapshotReportDate));
+          baseExportItems = allClassified.filter(item => {
+            const q = snapshotSearch.trim().toLowerCase();
+            return (
+              (snapshotCategory === 'Tất cả ngành hàng' || item.category === snapshotCategory) &&
+              matchesOrigin(item, snapshotOrigin, trackedAll) &&
+              (!snapshotRedOnly || item.priorityRank === 0) &&
+              (!q || [item.poId, item.vendorNo, item.vendorName, item.vendorItemNo, item.category].some(val => matchesSearch(val, q)))
+            );
+          }).sort(comparePriority);
+        } catch (err) {
+          setOrdersIncomplete(true);
+          setOrdersWarning(err.message || 'Chưa tải đủ toàn bộ danh sách PO để xuất báo cáo.');
+          showToast(
+            err.message || 'Không thể xuất báo cáo vì danh sách PO chưa được tải đầy đủ. Vui lòng thử lại.',
+            'error'
+          );
+          return;
+        }
+      }
       const exportVendorItems =
         snapshotSection === 'orders' && snapshotOrderView === 'fulfillment' && snapshotOrderFilter !== 'all'
-          ? sortedVendorItems.filter(item => matchesFulfillment(item, snapshotOrderFilter, snapshotReportDate))
-          : sortedVendorItems;
+          ? baseExportItems.filter(item => matchesFulfillment(item, snapshotOrderFilter, snapshotReportDate))
+          : baseExportItems;
 
       const exportRevenue = sortedRevenueRecords;
       const exportReceivables = tableReceivables;
       const exportPayables = tablePayables;
 
-      const orderHistory = await fetchOrderHistory(exportVendorItems);
+      const orderHistory = showOrders && exportVendorItems.length > 0 ? await fetchOrderHistory(exportVendorItems, exportController.signal) : [];
       const hasDocumentFilter =
         snapshotCategory !== 'Tất cả ngành hàng' ||
         snapshotOrigin !== 'Tất cả xuất xứ' ||
@@ -649,8 +847,14 @@ export default function App() {
           'Trạng thái hồ sơ chi': snapshotSection === 'payables' ? snapshotWorkflowFilter : 'all',
         }, snapshotLanguage);
       showToast('Đã xuất báo cáo Excel.');
-    } catch { showToast('Không thể xuất báo cáo. Vui lòng thử lại.', 'error'); }
-    finally { setIsExporting(false); }
+    } catch (err) {
+      if (err?.name === 'AbortError') {
+        showToast('Đã hủy thao tác xuất báo cáo Excel.', 'info');
+      } else {
+        showToast(err?.message || 'Không thể xuất báo cáo. Vui lòng thử lại.', 'error');
+      }
+    }
+    finally { if (exportAbortRef.current === exportController) exportAbortRef.current = null; setIsExporting(false); }
   };
 
   const handleSaveEntry = async (sheetId, rows) => {
@@ -681,11 +885,17 @@ export default function App() {
         reportDate,
         expectedTrackingVersion: target.trackingVersion ?? null,
       });
-      const updated = res.item;
-      setVendorItems(prev => prev.map(row => row.rowId === updated.rowId ? updated : row));
+      let updated = res?.item?.poId ? res.item : res?.poId ? res : null;
+      if (!updated) {
+        const detail = await fetchOrderDetailApi(target.rowId).catch(() => null);
+        updated = detail?.item?.poId ? detail.item : detail?.poId ? detail : null;
+      }
+      if (updated) {
+        setVendorItems(prev => prev.map(row => row.rowId === updated.rowId ? updated : row));
+        setWorkspacePanel({ type: 'ITEM_DETAIL', data: classifyProgress(updated, reportDate) });
+      }
       setDataRevision(version => version + 1);
       setWorkspaceDirty(false); setWorkspaceError('');
-      setWorkspacePanel({ type: 'ITEM_DETAIL', data: classifyProgress(updated, reportDate) });
       showToast(`Đã lưu cập nhật và lịch sử ${target.poId}`);
     } catch (error) {
       if (error.status === 409 || error.code === 'REQUEST_ALREADY_COMMITTED') {
@@ -705,15 +915,32 @@ export default function App() {
         ...payload,
         expectedRevision: finance.revision,
       });
-      const next = apiRes.finance ?? apiRes;
+      let next =
+        apiRes?.finance && isFinanceSnapshotPayload(apiRes.finance)
+          ? apiRes.finance
+          : isFinanceSnapshotPayload(apiRes)
+            ? apiRes
+            : null;
+      if (!next && (apiRes?.committed || apiRes?.dataRevision !== undefined)) {
+        const reconciled = await fetchFinanceStateApi({});
+        if (isFinanceSnapshotPayload(reconciled)) next = reconciled;
+      }
       if (!next) throw new Error('Không nhận được trạng thái tài chính mới từ máy chủ.');
       setFinance(next);
       setDataRevision(version => version + 1);
       if (action === 'split' && payableWorkflowFilter === AP_SPLIT_REQUIRED) setPayableWorkflowFilter(AP_REVIEW);
       setWorkspaceDirty(false); setWorkspaceError('');
       if (close) setWorkspacePanel(null);
-      showToast(action === 'invoice' ? 'Đã ghi nhận doanh thu và khoản phải thu tương ứng.' :
-        action === 'split' ? 'Đã lưu các chứng từ riêng. Có thể lập đề nghị chi cho từng chứng từ.' : 'Đã lưu giao dịch và lịch sử xử lý.');
+      showToast(
+        action === 'invoice' ? 'Đã ghi nhận doanh thu và khoản phải thu tương ứng.' :
+        action === 'create-receivable' ? 'Đã tạo mới khoản công nợ phải thu.' :
+        action === 'update-receivable' ? 'Đã cập nhật khoản công nợ phải thu.' :
+        action === 'delete-receivable' ? 'Đã xóa khoản công nợ phải thu.' :
+        action === 'payable' || action === 'create-payable' ? 'Đã tạo mới khoản công nợ phải trả.' :
+        action === 'update-payable' ? 'Đã cập nhật khoản công nợ phải trả.' :
+        action === 'delete-payable' ? 'Đã xóa khoản công nợ phải trả.' :
+        action === 'split' ? 'Đã lưu các chứng từ riêng. Có thể lập đề nghị chi cho từng chứng từ.' : 'Đã lưu giao dịch và lịch sử xử lý.'
+      );
       return next;
     } catch (error) {
       if (error.code === 'FINANCE_REVISION_CONFLICT' || error.code === 'REQUEST_ALREADY_COMMITTED' || error.status === 409) {
@@ -723,6 +950,16 @@ export default function App() {
       return null;
     }
     finally { workspaceSavingRef.current = false; setIsSavingWorkspace(false); }
+  };
+
+  const handleDeleteDebt = async (debtType, row) => {
+    if (!row?.id || workspaceSavingRef.current) return;
+    if (Number(row.allocatedPaid || 0) > 0) {
+      showToast('Không thể xóa chứng từ đã phát sinh giao dịch thu/chi.', 'error');
+      return;
+    }
+    const action = debtType === 'receivables' ? 'delete-receivable' : 'delete-payable';
+    await handleFinanceAction(action, { id: row.id }, true);
   };
 
   const renderPriorityBadge = (level) => {
@@ -745,15 +982,16 @@ export default function App() {
   // ============================================================================
   // RENDER LOGIN PAGE WHEN NOT AUTHENTICATED
   // ============================================================================
-  const logout = () => {
+  const logout = (noticeOverride = '') => {
     if (entrySaving.current) {
       showToast('Đang lưu dữ liệu. Vui lòng chờ.');
       return;
     }
+    const baseNotice = typeof noticeOverride === 'string' ? noticeOverride : '';
+    exportAbortRef.current?.abort();
     abortAllPageRequests();
     orderDetailRequest.current?.abort();
     clearEntryDrafts(currentAccountId);
-    logoutApi().catch(() => setLoginNotice('Đã đóng phiên trên trình duyệt. Máy chủ chưa xác nhận thu hồi phiên.'));
     setAlertTaskDraft(null);
     setReminderDraft(null);
     setPayableWorkflowFilter('all');
@@ -774,16 +1012,23 @@ export default function App() {
     setReportDate(businessToday());
     setLoginPassword('');
     setLoginError('');
-    setLoginNotice('');
+    setSessionRestoreError('');
+    setLoginNotice(baseNotice);
     setForgotPasswordSent(false);
     setWorkspacePanel(null);
     setActiveSection('overview');
     setToast(null);
+    logoutApi().catch(() => {
+      setLoginNotice(
+        baseNotice
+          ? `${baseNotice} (Đã đóng phiên trên trình duyệt, máy chủ chưa xác nhận thu hồi phiên.)`
+          : 'Đã đóng phiên trên trình duyệt. Máy chủ chưa xác nhận thu hồi phiên.'
+      );
+    });
   };
 
   const handlePasswordChanged = () => {
-    logout();
-    setLoginNotice('Đã đổi mật khẩu. Vui lòng đăng nhập lại bằng mật khẩu mới.');
+    logout('Đã đổi mật khẩu. Vui lòng đăng nhập lại bằng mật khẩu mới.');
   };
 
   if (!isAuthenticated || !currentUser) {
@@ -802,6 +1047,9 @@ export default function App() {
             {loginError && <div className="login-message login-error" role="alert">{t(loginError)}</div>}
             {policyError && <div className="login-message login-error" role="alert">
               {t(policyError)} <button type="button" onClick={() => setPolicyAttempt(attempt => attempt + 1)}>{t('Thử lại')}</button>
+            </div>}
+            {sessionRestoreError && <div className="login-message login-error" role="alert">
+              {t(sessionRestoreError)} <button type="button" onClick={() => setSessionRestoreAttempt(attempt => attempt + 1)}>{t('Thử lại')}</button>
             </div>}
             {loginNotice && <div className="login-message" role="status">{t(loginNotice)}</div>}
             {forgotPasswordSent && <div className="login-message" role="status">{t("Vui lòng liên hệ quản trị viên để cấp lại mật khẩu.")}</div>}
@@ -942,6 +1190,9 @@ export default function App() {
       {dataPanel && dataError && <p className="workspace-error" role="alert">{t(dataError)}{' '}
         <button type="button" onClick={() => setDataRevision(version => version + 1)}>{t('Thử lại')}</button>
       </p>}
+      {dataPanel && ordersWarning && <p className="workspace-error" role="alert">{t(ordersWarning)}{' '}
+        <button type="button" onClick={() => setDataRevision(version => version + 1)}>{t('Thử lại')}</button>
+      </p>}
       <Suspense fallback={<main className="dashboard-workspace"><p role="status">{t('Đang tải dữ liệu…')}</p></main>}>
       {activeSection === 'data-entry' ? <main className="dashboard-workspace entry-page">
         <DataEntryPage key={currentUser.id} actor={currentUser} data={{ items: vendorItems, finance, directory }} onSave={handleSaveEntry} />
@@ -955,6 +1206,7 @@ export default function App() {
           busy={directoryBusy}
           onAction={handleDirectoryAction}
           onOpenAlert={openWorkAlert}
+          onAssignAlert={canAssignAlert ? assignWorkAlert : undefined}
           onNavigate={onNavigate}
           initialDraft={reminderDraft}
           onClearDraft={() => setReminderDraft(null)}
@@ -981,7 +1233,7 @@ export default function App() {
           onOpenAlert={openWorkAlert}
           canNavigate={section => canOpenSection(currentUser, section)}
           onAssignAlert={canAssignAlert ? assignWorkAlert : undefined}
-          onRemindAlert={showReminders ? remindWorkAlert : undefined}
+          onRemindAlert={canRemindBoss ? remindWorkAlert : undefined}
           tasks={allDirectoryTasks}
           accounts={accounts}
           reminders={allReminders}
@@ -991,7 +1243,7 @@ export default function App() {
             alerts={reminderAlerts}
             role={currentRole}
             onOpen={openWorkAlert}
-            onRemindAlert={showReminders ? remindWorkAlert : undefined}
+            onRemindAlert={canRemindBoss ? remindWorkAlert : undefined}
             tasks={allDirectoryTasks}
             accounts={accounts}
             reminders={allReminders}
@@ -1017,9 +1269,9 @@ export default function App() {
         </select></label></div>}
         {activeSection === 'overview' && <DashboardOverview role={currentRole} items={sortedVendorItems} revenue={sortedRevenueRecords} categoryStats={categoryStats}
           reportDate={reportDate} ar={arSummary} ap={apSummary} alerts={alerts} monthlyData={monthlyData} onNavigate={onNavigate} onOpenItem={openItem} onResetFilters={resetFilters} onOpenAlert={openWorkAlert}
-          onAssignAlert={canAssignAlert ? assignWorkAlert : undefined} onRemindAlert={showReminders ? remindWorkAlert : undefined} tasks={allDirectoryTasks} accounts={accounts} reminders={allReminders} />}
+          onAssignAlert={canAssignAlert ? assignWorkAlert : undefined} onRemindAlert={canRemindBoss ? remindWorkAlert : undefined} tasks={allDirectoryTasks} accounts={accounts} reminders={allReminders} />}
         {activeSection === 'orders' && <div className="order-view-tabs" aria-label={t("Chế độ tiến độ đơn hàng")}><button aria-pressed={orderView === 'fulfillment'} onClick={() => setOrderView('fulfillment')}>{t("Nhập & giao hàng")}</button><button aria-pressed={orderView === 'production'} onClick={() => setOrderView('production')}>{t("Sản xuất & đóng gói")}</button></div>}
-        {activeSection === 'orders' && orderView === 'fulfillment' && <FulfillmentTable onResetFilters={resetFilters} items={sortedVendorItems} reportDate={reportDate} onOpenItem={openItem} selectedFilter={debouncedOrderFilter} onFilterChange={setOrderFilter} tasks={allDirectoryTasks} accounts={accounts} reminders={allReminders} onRemindAlert={showReminders ? remindWorkAlert : undefined} />}
+        {activeSection === 'orders' && orderView === 'fulfillment' && <FulfillmentTable onResetFilters={resetFilters} items={sortedVendorItems} reportDate={reportDate} onOpenItem={openItem} selectedFilter={debouncedOrderFilter} onFilterChange={setOrderFilter} tasks={allDirectoryTasks} accounts={accounts} reminders={allReminders} onRemindAlert={canRemindBoss ? remindWorkAlert : undefined} />}
         {activeSection === 'orders' && orderView === 'production' && (
           <section className="space-y-6">
             <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-2xs space-y-5">
@@ -1126,7 +1378,7 @@ export default function App() {
                                 tasks={allDirectoryTasks}
                                 accounts={accounts}
                                 reminders={allReminders}
-                                canRemind={showReminders}
+                                canRemind={canRemindBoss}
                                 onRemind={() => remindWorkAlert(alertObj)}
                                 compact={true}
                               />
@@ -1243,7 +1495,7 @@ export default function App() {
                                 tasks={allDirectoryTasks}
                                 accounts={accounts}
                                 reminders={allReminders}
-                                canRemind={showReminders}
+                                canRemind={canRemindBoss}
                                 onRemind={() => remindWorkAlert(alertObj)}
                                 compact={true}
                               />
@@ -1277,6 +1529,11 @@ export default function App() {
               <div className="flex items-center gap-3">
                 <span className="text-xs text-slate-600">{t("Tiền thu chưa phân bổ giữ riêng: ")}<strong className="text-slate-900">{formatVnd(unallocatedCash)}</strong>
                 </span>
+                {canManageArCrud && <button
+                  type="button"
+                  onClick={() => openWorkspace({ type: 'CREATE_AR', debtType: 'receivables', data: null })}
+                  className="row-detail-button text-xs font-semibold"
+                >{t("+ Thêm phải thu")}</button>}
                 {can(currentUser, 'receivables.allocate') && <button
                   onClick={() => openWorkspace({ type: 'ALLOCATE_AR', data: null })}
                   className="px-3 py-1.5 rounded-lg bg-slate-900 text-white text-xs font-semibold hover:bg-slate-800 cursor-pointer"
@@ -1287,7 +1544,7 @@ export default function App() {
             <DebtStatusOverview rows={sortedReceivables} debtType="receivables" role={currentRole}
               filter={debouncedDebtFilter} onFilter={setDebtFilter} onOpen={openWorkspace}
               redOnly={onlyMyRoleRedAlerts} onClearRed={() => { setOnlyMyRoleRedAlerts(false); setDebtFilter('all'); }}
-              tasks={allDirectoryTasks} accounts={accounts} reminders={allReminders} onRemindAlert={showReminders ? remindWorkAlert : undefined} />
+              tasks={allDirectoryTasks} accounts={accounts} reminders={allReminders} onRemindAlert={canRemindBoss ? remindWorkAlert : undefined} />
             <div className="overflow-x-auto border border-slate-200 rounded-xl">
               <table className="w-full text-left border-collapse text-xs sm:text-sm">
                 <thead>
@@ -1327,7 +1584,7 @@ export default function App() {
                               tasks={allDirectoryTasks}
                               accounts={accounts}
                               reminders={allReminders}
-                              canRemind={showReminders}
+                              canRemind={canRemindBoss}
                               onRemind={() => remindWorkAlert(alertObj)}
                               compact={true}
                             />
@@ -1348,7 +1605,7 @@ export default function App() {
                         <td className={`py-3 px-4 text-right font-mono font-bold ${isRed ? 'text-rose-700' : 'text-slate-900'}`}>{formatVnd(ar.remaining)}</td>
                         <td className="py-3 px-4 text-xs text-slate-600 max-w-xs">
                           {t(ar.commitmentNote || '—')}
-                        </td><td className="sticky-action"><button className="row-detail-button" onClick={() => openWorkspace({ type: 'DEBT_DETAIL', debtType: 'receivables', data: ar })}>{t("Chi tiết")}<ChevronRight size={15} /></button></td>
+                        </td><td className="sticky-action"><div className="row-actions">{canManageArCrud && <button type="button" className="row-detail-button" onClick={() => openWorkspace({ type: 'EDIT_AR', debtType: 'receivables', data: ar })}>{t("Sửa")}</button>}{canManageArCrud && Number(ar.allocatedPaid || 0) === 0 && <button type="button" className="row-detail-button" onClick={() => handleDeleteDebt('receivables', ar)}>{t("Xóa")}</button>}<button className="row-detail-button" onClick={() => openWorkspace({ type: 'DEBT_DETAIL', debtType: 'receivables', data: ar })}>{t("Chi tiết")}<ChevronRight size={15} /></button></div></td>
                       </tr>
                     );
                   })}
@@ -1364,13 +1621,20 @@ export default function App() {
               <div>
                 <h2 className="text-lg font-bold text-slate-900 mt-1">{t("Công nợ phải trả")}</h2>
               </div>
+              <div className="flex items-center gap-2">
+                {canManageApCrud && <button
+                  type="button"
+                  onClick={() => openWorkspace({ type: 'CREATE_AP', debtType: 'payables', data: null })}
+                  className="px-3 py-1.5 rounded-lg bg-slate-900 text-white text-xs font-semibold hover:bg-slate-800 cursor-pointer"
+                >{t("+ Thêm phải trả")}</button>}
+              </div>
             </div>
 
-            <div className="workflow-filter-tabs" aria-label={t("Lọc quy trình chi")}>{[['all', 'Tất cả hồ sơ'], [AP_SPLIT_REQUIRED, AP_SPLIT_REQUIRED], [AP_PENDING, 'Chờ CEO duyệt'], [AP_APPROVED, 'Đã duyệt chi'], [AP_REVIEW, 'Cần lập đề nghị'], [AP_RETURNED, 'Cần bổ sung']].map(([value, label]) => <button key={value} aria-pressed={payableWorkflowFilter === value} onClick={() => setPayableWorkflowFilter(value)}>{t(label)}<span>{value === 'all' ? sortedPayables.length : sortedPayables.filter(row => payableWorkflowStatus(row) === value).length}</span></button>)}</div>
+            <div className="workflow-filter-tabs" aria-label={t("Lọc quy trình chi")}>{[['all', 'Tất cả hồ sơ'], [AP_SPLIT_REQUIRED, AP_SPLIT_REQUIRED], [AP_PENDING, 'Chờ CEO duyệt'], [AP_APPROVED, 'Đã duyệt chi'], [AP_REVIEW, 'Cần lập đề nghị'], [AP_RETURNED, 'Cần bổ sung']].map(([value, label]) => <button key={value} aria-pressed={payableWorkflowFilter === value} onClick={() => { setPayableWorkflowFilter(value); if (debtFilter !== 'all') setDebtFilter('all'); }}>{t(label)}<span>{value === 'all' ? sortedPayables.length : sortedPayables.filter(row => payableWorkflowStatus(row) === value).length}</span></button>)}</div>
             <DebtStatusOverview rows={payableScope} debtType="payables" role={currentRole} canSplit={showOrders}
               filter={debouncedDebtFilter} onFilter={setDebtFilter} onOpen={openWorkspace}
               redOnly={onlyMyRoleRedAlerts} onClearRed={() => { setOnlyMyRoleRedAlerts(false); setDebtFilter('all'); }}
-              tasks={allDirectoryTasks} accounts={accounts} reminders={allReminders} onRemindAlert={showReminders ? remindWorkAlert : undefined} />
+              tasks={allDirectoryTasks} accounts={accounts} reminders={allReminders} onRemindAlert={canRemindBoss ? remindWorkAlert : undefined} />
             <div className="overflow-x-auto border border-slate-200 rounded-xl">
               <table className="w-full text-left border-collapse text-xs sm:text-sm">
                 <thead>
@@ -1412,7 +1676,7 @@ export default function App() {
                               tasks={allDirectoryTasks}
                               accounts={accounts}
                               reminders={allReminders}
-                              canRemind={showReminders}
+                              canRemind={canRemindBoss}
                               onRemind={() => remindWorkAlert(alertObj)}
                               compact={true}
                             />
@@ -1439,7 +1703,7 @@ export default function App() {
                             {t(status)}
                           </span>
                         </td>
-                        <td className="py-3 px-4 sticky-action"><div className="row-actions">{action && <button onClick={() => openWorkspace({ type: action.type, data: ap })} className="row-primary-button">{t(action.label)}</button>}<button className="row-detail-button" onClick={() => openWorkspace({ type: 'DEBT_DETAIL', debtType: 'payables', data: ap })}>{t("Chi tiết")}<ChevronRight size={15} /></button></div></td>
+                        <td className="py-3 px-4 sticky-action"><div className="row-actions">{action && <button onClick={() => openWorkspace({ type: action.type, data: ap })} className="row-primary-button">{t(action.label)}</button>}{canManageApCrud && <button type="button" className="row-detail-button" onClick={() => openWorkspace({ type: 'EDIT_AP', debtType: 'payables', data: ap })}>{t("Sửa")}</button>}{canManageApCrud && Number(ap.allocatedPaid || 0) === 0 && <button type="button" className="row-detail-button" onClick={() => handleDeleteDebt('payables', ap)}>{t("Xóa")}</button>}<button className="row-detail-button" onClick={() => openWorkspace({ type: 'DEBT_DETAIL', debtType: 'payables', data: ap })}>{t("Chi tiết")}<ChevronRight size={15} /></button></div></td>
                       </tr>
                     );
                   })}
@@ -1474,7 +1738,11 @@ export default function App() {
                   <h3 id="workspace-title" className="text-base sm:text-lg font-bold">
                     {workspacePanel.type === 'ITEM_DETAIL' && t(workspacePanel.data.vendorItemNo)}
                     {t(workspacePanel.type === 'ALLOCATE_AR' && 'Phân bổ tiền thu')}
+                    {t(workspacePanel.type === 'CREATE_AR' && 'Thêm khoản công nợ phải thu')}
+                    {t(workspacePanel.type === 'EDIT_AR' && 'Cập nhật công nợ phải thu')}
                     {t(workspacePanel.type === 'RECORD_REV' && 'Ghi nhận doanh thu')}
+                    {t(workspacePanel.type === 'CREATE_AP' && 'Thêm khoản công nợ phải trả')}
+                    {t(workspacePanel.type === 'EDIT_AP' && 'Cập nhật công nợ phải trả')}
                     {t(workspacePanel.type === 'SUBMIT_AP' && 'Lập đề nghị chi')}
                     {t(workspacePanel.type === 'SPLIT_AP' && 'Tách chứng từ phải trả')}
                     {t(workspacePanel.type === 'REVIEW_AP' && 'Xem xét đề nghị chi')}
@@ -1504,17 +1772,21 @@ export default function App() {
             </div>
             <div className="workspace-body" onChangeCapture={event => { if (event.target.closest('form')) { setWorkspaceDirty(true); setWorkspaceError(''); } }}>
               {workspaceError && <div className="workspace-error" role="alert" tabIndex={-1}><AlertTriangle size={18} /><span>{t(workspaceError)}</span></div>}
-              {workspacePanel.type === 'ITEM_DETAIL' && <ItemDetailPanel item={workspacePanel.data} reportDate={reportDate} canEdit={canUpdateProgress} canLowerAlerts={isExecutiveRole(currentRole)} financials={itemFinancialSummary(workspacePanel.data, { revenue: showRevenue ? revenueRecords : [], receivables: classifiedAr, payables: classifiedAp })} isSaving={isSavingWorkspace} onSubmit={handleUpdateItemProgress} onClose={requestCloseWorkspace} tasks={allDirectoryTasks} accounts={accounts} reminders={allReminders} onRemindAlert={showReminders ? remindWorkAlert : undefined} />}
-              {['ALLOCATE_AR', 'RECORD_REV', 'SPLIT_AP', 'SUBMIT_AP', 'REVIEW_AP', 'PAY_AP'].includes(workspacePanel.type) &&
+              {workspacePanel.type === 'ITEM_DETAIL' && <ItemDetailPanel item={workspacePanel.data} reportDate={reportDate} canEdit={canUpdateProgress} canLowerAlerts={isExecutiveRole(currentRole)} financials={itemFinancialSummary(workspacePanel.data, { revenue: showRevenue ? revenueRecords : [], receivables: classifiedAr, payables: classifiedAp })} isSaving={isSavingWorkspace} onSubmit={handleUpdateItemProgress} onClose={requestCloseWorkspace} tasks={allDirectoryTasks} accounts={accounts} reminders={allReminders} onRemindAlert={canRemindBoss ? remindWorkAlert : undefined} />}
+              {['ALLOCATE_AR', 'CREATE_AR', 'EDIT_AR', 'RECORD_REV', 'CREATE_AP', 'EDIT_AP', 'SPLIT_AP', 'SUBMIT_AP', 'REVIEW_AP', 'PAY_AP'].includes(workspacePanel.type) &&
                 (!financeLoaded || (needsDebtRecord && !workspaceDebt) ? <p role="status">{t(dataError || (dataLoading || !financeLoaded
                   ? 'Đang tải dữ liệu…' : 'Chứng từ không còn trong dữ liệu hiện tại.'))}</p> :
                   <fieldset className="min-w-0" disabled={isSavingWorkspace || dataLoading || Boolean(dataError)} aria-busy={isSavingWorkspace || dataLoading}>
                 {workspacePanel.type === 'ALLOCATE_AR' && <ReceiptWorkspace initialDebtId={workspacePanel.data?.id} finance={finance} onAction={handleFinanceAction} onClose={requestCloseWorkspace} />}
+                {workspacePanel.type === 'CREATE_AR' && <ReceivableCrudForm mode="create" finance={finance} items={vendorItems} onAction={handleFinanceAction} onClose={requestCloseWorkspace} />}
+                {workspacePanel.type === 'EDIT_AR' && <ReceivableCrudForm mode="edit" row={workspaceDebt} finance={finance} items={vendorItems} onAction={handleFinanceAction} onClose={requestCloseWorkspace} />}
                 {workspacePanel.type === 'RECORD_REV' && <InvoiceForm finance={finance} items={vendorItems} onAction={handleFinanceAction} onClose={requestCloseWorkspace} />}
+                {workspacePanel.type === 'CREATE_AP' && <PayableCrudForm mode="create" items={vendorItems} onAction={handleFinanceAction} onClose={requestCloseWorkspace} />}
+                {workspacePanel.type === 'EDIT_AP' && <PayableCrudForm mode="edit" row={workspaceDebt} items={vendorItems} onAction={handleFinanceAction} onClose={requestCloseWorkspace} />}
                 {workspacePanel.type === 'SPLIT_AP' && <SplitPayableForm row={workspaceDebt} items={vendorItems} onAction={handleFinanceAction} onClose={requestCloseWorkspace} />}
-                {['SUBMIT_AP', 'REVIEW_AP', 'PAY_AP'].includes(workspacePanel.type) && <PayableForm actorId={currentUser.id} type={workspacePanel.type} row={workspaceDebt} onAction={handleFinanceAction} onClose={requestCloseWorkspace} />}
+                {['SUBMIT_AP', 'REVIEW_AP', 'PAY_AP'].includes(workspacePanel.type) && <PayableForm actorId={currentUser.id} actorRole={currentRole} type={workspacePanel.type} row={workspaceDebt} onAction={handleFinanceAction} onClose={requestCloseWorkspace} />}
               </fieldset>)}
-              {workspacePanel.type === 'DEBT_DETAIL' && <DebtDetailPanel row={classifyDebt(workspaceDebt ?? workspacePanel.data, reportDate)} debtType={workspacePanel.debtType} role={currentRole} canSplit={showOrders} history={visibleFinanceHistory} onOpen={openWorkspace} onClose={requestCloseWorkspace} tasks={allDirectoryTasks} accounts={accounts} reminders={allReminders} onRemindAlert={showReminders ? remindWorkAlert : undefined} />}
+              {workspacePanel.type === 'DEBT_DETAIL' && <DebtDetailPanel row={classifyDebt(workspaceDebt ?? workspacePanel.data, reportDate)} debtType={workspacePanel.debtType} role={currentRole} canSplit={showOrders} history={visibleFinanceHistory} onOpen={openWorkspace} onClose={requestCloseWorkspace} onDelete={handleDeleteDebt} tasks={allDirectoryTasks} accounts={accounts} reminders={allReminders} onRemindAlert={canRemindBoss ? remindWorkAlert : undefined} />}
             </div>
           </div>
           {showDiscardDialog && <div className="discard-overlay"><section role="alertdialog" aria-modal="true" aria-labelledby="discard-title" className="discard-dialog"><h3 id="discard-title">{t("Bạn chưa lưu thay đổi")}</h3><p>{t("Giữ cửa sổ này để tiếp tục chỉnh sửa hoặc bỏ phần chưa lưu.")}</p><div><button className="primary" onClick={() => { setShowDiscardDialog(false); document.querySelector('.workspace-dialog input:not([type=hidden]), .workspace-dialog textarea')?.focus(); }}>{t("Tiếp tục chỉnh sửa")}</button><button onClick={() => { setShowDiscardDialog(false); setWorkspaceDirty(false); setWorkspacePanel(null); }}>{t("Bỏ thay đổi")}</button></div></section></div>}

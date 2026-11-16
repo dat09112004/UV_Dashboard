@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { BM41_ORDERS, BM41_OPENING_DATE, BM41_REPORT_DATE, BM41_FINANCE_STORAGE_KEY } from '../src/mock/bm41.js';
+import { BM41_ORDERS, BM41_OPENING_DATE, BM41_REPORT_DATE, BM41_FINANCE_STORAGE_KEY } from './fixtures/bm41.js';
 import { classifyProgress, summarizeCategories } from '../src/utils/dashboardMetrics.js';
 import { receiptAnalytics } from '../src/utils/receiptAnalytics.js';
 import { deliveryAnalytics } from '../src/utils/deliveryAnalytics.js';
 import { getFulfillment, loadTrackedItems, updateProgressRecord } from '../src/utils/orderFulfillment.js';
-import { FINANCE_STORAGE_KEY, initialFinanceState, loadFinanceState } from '../src/utils/financeWorkflow.js';
+import { initialFinanceState } from '../src/utils/financeWorkflow.js';
 
 test('BM41 order references, dates, quantity and purchase value match the source', () => {
   assert.deepEqual(BM41_ORDERS.map(row => [row.poId, row.expectedReceiptDate, row.unitPriceVnd]), [
@@ -43,10 +43,7 @@ test('updating BM41 receipt data preserves unknown production and customer deliv
   assert.equal(classifyProgress(updated, BM41_REPORT_DATE).priorityRank, 2);
 });
 
-test('BM41 does not read the opening finance balances from the previous demo', () => {
-  const old = initialFinanceState([], [], [], BM41_OPENING_DATE);
+test('BM41 opening finance state starts clean when includeOpeningReceipt is false', () => {
   const base = initialFinanceState([], [], [], BM41_OPENING_DATE, { includeOpeningReceipt: false });
-  const store = { getItem: key => key === FINANCE_STORAGE_KEY ? JSON.stringify(old) : null };
-  const current = loadFinanceState(base, store, BM41_FINANCE_STORAGE_KEY);
-  for (const key of ['revenue', 'receivables', 'payables', 'receipts']) assert.deepEqual(current[key], []);
+  for (const key of ['revenue', 'receivables', 'payables', 'receipts']) assert.deepEqual(base[key], []);
 });

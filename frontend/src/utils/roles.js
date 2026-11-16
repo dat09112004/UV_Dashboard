@@ -24,13 +24,18 @@ export const can = (user, permission) => user?.status === 'active' && Boolean((u
 
 export function manageableRoles(actor) {
   if (!can(actor, 'users.manage')) return [];
-  if (isExecutiveRole(actor.role)) return ['Admin', 'Sale', 'Accountant'];
+  if (actor.role === 'CEO') return ['Sale', 'Accountant', 'CEO'];
+  if (actor.role === 'Admin') return ['Sale', 'Accountant'];
   return [];
 }
 
 export function canEditAccount(actor, target) {
-  return Boolean(target && target.id !== actor?.id && target.role !== 'CEO' &&
-    manageableRoles(actor).includes(target.role));
+  return Boolean(
+    actor?.status === 'active' &&
+      target &&
+      target.id !== actor?.id &&
+      (manageableRoles(actor).includes(target.role) || (actor?.role === 'CEO' && target.role === 'Admin'))
+  );
 }
 
 export const NAVIGATION_LABELS = {

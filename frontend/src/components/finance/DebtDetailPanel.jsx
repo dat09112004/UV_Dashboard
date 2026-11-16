@@ -9,10 +9,12 @@ import { isExecutiveRole } from '../../utils/roles.js';
 import AlertAssignmentLine from '../common/AlertAssignmentLine.jsx';
 
 export default function DebtDetailPanel({
-  row, debtType, role, history, onOpen, onClose, canSplit = true,
+  row, debtType, role, history, onOpen, onClose, onDelete, canSplit = true,
   tasks = [], accounts = [], reminders = [], onRemindAlert,
 }) {
   const isAr = debtType === 'receivables';
+  const canManageCrud = isExecutiveRole(role) || role === 'Accountant';
+  const canDeleteRow = canManageCrud && Number(row.allocatedPaid || 0) === 0;
   const action = isAr
     ? ((isExecutiveRole(role) || role === 'Accountant') && row.remaining > 0 ? { type: 'ALLOCATE_AR', label: 'Thu tiền & phân bổ' } : null)
     : payableAction(row, role, canSplit);
@@ -39,6 +41,19 @@ export default function DebtDetailPanel({
     {grouped && <p className="workflow-callout"><AlertTriangle size={18} /><span>{t(canSplit ? 'Chứng từ gộp nhiều nhà cung cấp. Kế toán cần tách và đối soát trước khi trình duyệt.' :
       'Cần quyền Tiến độ đơn hàng để tách chứng từ. Hãy liên hệ quản trị viên.')}</span></p>}
     <FinanceHistory entries={history.filter(entry => entry.reference === row.docNo || entry.reference === row.splitSourceDocNo)} />
-    <div className="workflow-footer"><button type="button" onClick={onClose}>{t("Đóng")}</button>{action && <button className="primary" onClick={() => onOpen({ ...action, data: row })}>{t(action.label)}<ArrowRight size={16} /></button>}</div>
+    <div className="workflow-footer">
+      <button type="button" onClick={onClose}>{t("Đóng")}</button>
+      {canManageCrud && (
+        <button type="button" className="row-detail-button" onClick={() => onOpen({ type: isAr ? 'EDIT_AR' : 'EDIT_AP', debtType, data: row })}>
+          {t("Sửa chứng từ")}
+        </button>
+      )}
+      {canDeleteRow && onDelete && (
+        <button type="button" className="row-detail-button" onClick={() => onDelete(debtType, row)}>
+          {t("Xóa chứng từ")}
+        </button>
+      )}
+      {action && <button className="primary" onClick={() => onOpen({ ...action, data: row })}>{t(action.label)}<ArrowRight size={16} /></button>}
+    </div>
   </div>;
 }

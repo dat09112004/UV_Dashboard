@@ -56,12 +56,13 @@ export function useProgressivePagination(
     [totalPages, initialChunkSize]
   );
 
+  const resetSignature = JSON.stringify(resetDeps);
+
   // Khi thay đổi từ khóa tìm kiếm / bộ lọc -> Đặt lại về Trang 1 và chỉ tải trước 1 phần đầu
   useEffect(() => {
     setCurrentPage(1);
     setVisibleCount(initialChunkSize);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sectionKey, initialChunkSize, ...resetDeps]);
+  }, [sectionKey, initialChunkSize, resetSignature]);
 
   // Tự động tải dần (Progressive Infinite Scroll trong phạm vi trang) khi người dùng lướt xuống chạm sentinel
   useEffect(() => {

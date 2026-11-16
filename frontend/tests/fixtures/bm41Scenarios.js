@@ -1,5 +1,5 @@
 import { BM41_ORDERS, BM41_OPENING_DATE } from './bm41.js';
-import { AP_APPROVED, AP_PENDING, AP_RETURNED, AP_REVIEW, initialFinanceState } from '../utils/financeWorkflow.js';
+import { AP_APPROVED, AP_PENDING, AP_RETURNED, AP_REVIEW, initialFinanceState } from '../../src/utils/financeWorkflow.js';
 
 // The five source PO rows remain in bm41.js. Everything added here is a demo.
 export const DEMO_TRACKING_KEY = 'uv-order-tracking-bm41-scenarios-v1';

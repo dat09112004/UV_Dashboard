@@ -192,9 +192,13 @@ async function verifyWorkbookDecompressedQuota(arrayBuffer, entries = []) {
     const reader = stream.getReader();
     let entryActualBytes = 0;
     try {
-      while (true) {
+      let reading = true;
+      while (reading) {
         const { done, value } = await reader.read();
-        if (done) break;
+        if (done) {
+          reading = false;
+          break;
+        }
         const chunkLen = value?.byteLength ?? 0;
         entryActualBytes += chunkLen;
         actualTotalBytes += chunkLen;
@@ -250,7 +254,7 @@ export function readEntrySheet(worksheet, schema, maxRows, year = '') {
     const values = {};
     for (const { match, position } of best.columns.values()) {
       const cell = worksheet.getRow(line).getCell(position);
-      const value = cell.isMerged && cell.master.col !== cell.col ? '' : cellValue(cell.value);
+      const value = cell.isMerged ? '' : cellValue(cell.value);
       if (cell.formula && (cell.result === undefined || cell.result?.error)) throw new Error(`Ô ${cell.address} chưa có kết quả công thức hợp lệ. Hãy tính lại hoặc dán giá trị.`);
       const isPercentage = ['onProcessPct', 'packagingPct'].includes(match.key);
       const percentFormat = isPercentage && cell.numFmt?.replace(/"[^"]*"|\\.|_.|\*./g, '').includes('%');

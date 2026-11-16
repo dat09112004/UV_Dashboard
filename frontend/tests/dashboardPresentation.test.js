@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ROLE_LAYOUTS, getRoleLayout, presentAlert } from '../src/utils/dashboardPresentation.js';
 import { DEBT_COLORS } from '../src/utils/chartColors.js';
-import { INITIAL_VENDOR_ITEMS as items, INITIAL_REVENUE_RECORDS as revenue, INITIAL_RECEIVABLES as ar, INITIAL_PAYABLES as ap, DATA_AS_OF } from '../src/mock/dashboard.js';
+import { INITIAL_VENDOR_ITEMS as items, INITIAL_REVENUE_RECORDS as revenue, INITIAL_RECEIVABLES as ar, INITIAL_PAYABLES as ap, DATA_AS_OF } from './fixtures/dashboard.js';
 import { classifyProgress, classifyDebt, summarizeCategories, buildAlertQueue, revenueBreakdown, sumBy } from '../src/utils/dashboardMetrics.js';
 const orders = items.map(row => classifyProgress(row, DATA_AS_OF));
 const receivables = ar.map(row => classifyDebt(row, DATA_AS_OF));

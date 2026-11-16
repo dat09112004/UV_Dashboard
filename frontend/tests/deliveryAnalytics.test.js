@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { deliveryAnalytics, deliveryRow, matchesDeliveryChart } from '../src/utils/deliveryAnalytics.js';
-import { INITIAL_VENDOR_ITEMS, DATA_AS_OF } from '../src/mock/dashboard.js';
+import { INITIAL_VENDOR_ITEMS, DATA_AS_OF } from './fixtures/dashboard.js';
 const base = { rowId: 1, orderedQty: 100, nhap: 100, unit: 'PCS', deliveredQty: 0, manualPriorityRank: 2, priorityRank: 2, onProcessPct: 100, packagingPct: 100, releasedPoDate: '01/11/2026', shipDateEtd: '04/11/2026', actualShipDate: '04/11/2026', etaDate: '20/11/2026' };
 
 test('delivery distribution is exclusive and never interprets missing confirmations as zero', () => {

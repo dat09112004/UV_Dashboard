@@ -1,4 +1,4 @@
-import { ROLE_PROFILES } from '../utils/roles.js';
+import { ROLE_PROFILES } from '../../src/utils/roles.js';
 
 /**
  * Tài khoản thử nghiệm tại máy, không chứa tài khoản thật.

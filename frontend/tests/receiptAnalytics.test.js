@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { receiptAnalytics, matchesReceiptChart } from '../src/utils/receiptAnalytics.js';
-import { INITIAL_VENDOR_ITEMS, DATA_AS_OF } from '../src/mock/dashboard.js';
+import { INITIAL_VENDOR_ITEMS, DATA_AS_OF } from './fixtures/dashboard.js';
 import { getFulfillment } from '../src/utils/orderFulfillment.js';
 
 test('receipt chart includes partial arrivals in their receipt and deadline groups', () => {

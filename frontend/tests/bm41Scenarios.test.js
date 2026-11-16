@@ -1,12 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { BM41_ORDERS, BM41_REPORT_DATE } from '../src/mock/bm41.js';
-import { DEMO_ORDERS, DEMO_FINANCE_BASE, DEMO_TRACKING_KEY, DEMO_FINANCE_KEY } from '../src/mock/bm41Scenarios.js';
-import { MOCK_ACCOUNTS } from '../src/mock/accounts.js';
+import { BM41_ORDERS, BM41_REPORT_DATE } from './fixtures/bm41.js';
+import { DEMO_ORDERS, DEMO_FINANCE_BASE, DEMO_TRACKING_KEY, DEMO_FINANCE_KEY } from './fixtures/bm41Scenarios.js';
+import { MOCK_ACCOUNTS } from './fixtures/accounts.js';
 import { classifyDebt, debtSummary, sumBy } from '../src/utils/dashboardMetrics.js';
-import { AP_APPROVED, AP_REVIEW, allocateReceipt, loadFinanceState, recordPayablePayment, reviewPayable,
+import { AP_APPROVED, AP_REVIEW, allocateReceipt, recordPayablePayment, reviewPayable,
   saveReceipt, splitPayable, unallocatedTotal, validateFinanceState } from '../src/utils/financeWorkflow.js';
-import { loadTrackedItems, persistTrackedItem, TRACKING_STORAGE_KEY } from '../src/utils/orderFulfillment.js';
+import { loadTrackedItems } from '../src/utils/orderFulfillment.js';
 
 const accountant = MOCK_ACCOUNTS.find(row => row.role === 'Accountant');
 const ceo = MOCK_ACCOUNTS.find(row => row.role === 'CEO');
@@ -54,14 +54,8 @@ test('the seeded documents support reconciliation, allocation, approval, payment
   validateFinanceState(state);
 });
 
-test('the seeded tracking history is visible and previous demo data does not override the scenario', () => {
-  const oldTracking = JSON.stringify({ version: 1, items: { 3500002: { nhap: 1 } } });
-  const data = new Map([[TRACKING_STORAGE_KEY, oldTracking]]);
-  const storage = { getItem: key => data.get(key), setItem: (key, value) => data.set(key, value) };
-  const [row] = loadTrackedItems(DEMO_ORDERS, storage, DEMO_TRACKING_KEY);
+test('the seeded tracking history is visible on loaded items', () => {
+  const [row] = loadTrackedItems(DEMO_ORDERS);
   assert.equal(row.nhap, 10000);
   assert.equal(row.trackingHistory.length, 1);
-  assert.ok(persistTrackedItem(row, storage, DEMO_TRACKING_KEY));
-  assert.equal(data.get(TRACKING_STORAGE_KEY), oldTracking);
-  assert.equal(loadFinanceState(seed, storage, DEMO_FINANCE_KEY).revision, 0);
 });

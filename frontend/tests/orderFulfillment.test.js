@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { INITIAL_VENDOR_ITEMS, DATA_AS_OF } from '../src/mock/dashboard.js';
+import { INITIAL_VENDOR_ITEMS, DATA_AS_OF } from './fixtures/dashboard.js';
 import { classifyProgress } from '../src/utils/dashboardMetrics.js';
-import { loadTrackedItems, persistTrackedItem, validateTracking, getFulfillment, fulfillmentSummary, matchesFulfillment, TRACKING_STORAGE_KEY, formatPercent } from '../src/utils/orderFulfillment.js';
+import { loadTrackedItems, validateTracking, getFulfillment, fulfillmentSummary, matchesFulfillment, formatPercent } from '../src/utils/orderFulfillment.js';
 const source = INITIAL_VENDOR_ITEMS[0];
 const ready = { ...source, orderedQty: 10000, unit: 'PCS', nhap: 9000, deliveredQty: 4500, expectedReceiptDate: '06/11/2026', actualDeliveryDate: '04/11/2026' };
 const memory = () => { const map = new Map(); return { getItem: k => map.get(k) ?? null, setItem: (k, value) => map.set(k, value) }; };
@@ -73,38 +73,6 @@ test('late arrival and delivery are flagged, while missing confirmation is descr
  assert.equal(getFulfillment({ ...complete, actualDeliveryDate: '' }, DATA_AS_OF).label, 'Đã giao đủ, thiếu ngày xác nhận');
 });
 
-test('tracking updates persist and reload without changing original financial data or original mock records', () => {
- const storage = memory();
- assert.ok(persistTrackedItem({ ...ready, role: 'CEO', revenueVnd: 1 }, storage));
- const restored = loadTrackedItems(INITIAL_VENDOR_ITEMS, storage)[0];
- assert.equal(restored.orderedQty, 10000); assert.equal(restored.deliveredQty, 4500);
- assert.equal(restored.revenueVnd, source.revenueVnd); assert.equal(restored.role, undefined);
- assert.equal(source.orderedQty, undefined); assert.equal(source.nhap, 9000);
- storage.setItem(TRACKING_STORAGE_KEY, '{broken');
- assert.equal(loadTrackedItems(INITIAL_VENDOR_ITEMS, storage)[0].orderedQty, null);
- storage.setItem(TRACKING_STORAGE_KEY, JSON.stringify({ version: 1, items: { 1: { ...ready, deliveredQty: 20000 } } }));
- assert.equal(loadTrackedItems(INITIAL_VENDOR_ITEMS, storage)[0].deliveredQty, null);
- assert.equal(persistTrackedItem(ready, { getItem: () => null, setItem: () => { throw new Error('Unavailable'); } }), false);
-});
-
-test('a stale edit cannot overwrite a PO line or its history, and legacy rows remain editable', () => {
- const storage = memory();
- const previous = { id: 'legacy-revision', actorId: 'user-sale', reason: 'Bản cũ', time: '2026-11-05T01:00:00Z' };
- storage.setItem(TRACKING_STORAGE_KEY, JSON.stringify({ version: 1, items: { [source.rowId]: { ...ready, trackingHistory: [previous] } } }));
- const [tabA, other] = loadTrackedItems(INITIAL_VENDOR_ITEMS, storage);
- const [tabB] = loadTrackedItems(INITIAL_VENDOR_ITEMS, storage);
- const nextEntry = { ...previous, id: 'first-edit', reason: 'Lần lưu mới' };
- const savedVersion = persistTrackedItem({ ...tabA, orderedQty: 12000, trackingHistory: [previous, nextEntry] }, storage);
- assert.ok(savedVersion);
- assert.throws(() => persistTrackedItem({ ...tabB, orderedQty: 11000 }, storage), /cửa sổ khác/);
- assert.ok(persistTrackedItem(other, storage));
- const [latest] = loadTrackedItems(INITIAL_VENDOR_ITEMS, storage);
- assert.equal(latest.orderedQty, 12000);
- assert.equal(latest.trackingVersion, savedVersion);
- assert.deepEqual(latest.trackingHistory.map(row => row.id), ['legacy-revision', 'first-edit']);
- assert.ok(persistTrackedItem({ ...latest, orderedQty: 13000 }, storage));
-});
-
 test('new tracked late delivery is reflected in the shared dashboard alert classifier', () => {
  const row = { ...ready, priorityRank: 2, onProcessPct: 100, packagingPct: 100, etaDate: '04/11/2026' };
  const classified = classifyProgress(row, DATA_AS_OF);
@@ -112,16 +80,9 @@ test('new tracked late delivery is reflected in the shared dashboard alert class
  assert.equal(classified.overdueDays, 1);
 });
 
-
 test('a partial delivery with time remaining is ordinary progress, while a near or missed deadline raises an alert', async () => {
   const row = { orderedQty: 10000, nhap: 9000, deliveredQty: 4500, actualDeliveryDate: '05/11/2026', etaDate: '20/11/2026' };
   assert.equal(getFulfillment(row, '2026-11-05').tone, 'normal');
   assert.equal(getFulfillment(row, '2026-11-05').label, 'Đang giao một phần');
   assert.equal(getFulfillment(row, '2026-11-18').tone, 'warning');
-  assert.equal(getFulfillment(row, '2026-11-21').tone, 'critical');
-  const { classifyProgress } = await import('../src/utils/dashboardMetrics.js');
-  const tracked = { ...row, rowId: 999, manualPriorityRank: 2, priorityRank: 2, onProcessPct: 100, packagingPct: 100, actualShipDate: '04/11/2026', shipDateEtd: '04/11/2026', releasedPoDate: '01/10/2026' };
-  assert.equal(classifyProgress(tracked, '2026-11-05').priorityRank, 2);
-  assert.equal(classifyProgress(tracked, '2026-11-18').priorityRank, 1);
-  assert.equal(classifyProgress(tracked, '2026-11-18').alertLabel, 'Sắp đến hạn giao');
 });

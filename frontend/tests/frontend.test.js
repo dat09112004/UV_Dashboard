@@ -3,15 +3,31 @@ import fs from 'node:fs';
 import test from 'node:test';
 import {
   apiRequest,
-  configureApi, clearAuthToken, setAuthToken, loginApi, fetchOrdersApi, saveEntryBatchApi,
+  configureApi,
+  clearAuthToken,
+  setAuthToken,
+  getSessionVersion,
+  getSessionIdentityKey,
+  parseRetryAfterMs,
+  loginApi,
+  fetchOrdersApi,
+  fetchDashboardSummaryApi,
+  previewOrderProgressApi,
+  fetchAccountsApi,
+  fetchTasksApi,
+  fetchRemindersApi,
+  fetchAuditLogsApi,
+  saveEntryBatchApi,
 } from '../src/services/api.js';
+import { buildRemotePageRequestKey } from '../src/hooks/useRemotePage.js';
+import { fetchOrdersPage, fetchOrderCollection } from '../src/features/orders/services/ordersService.js';
 import { clearEntryDrafts, readEntryDraft, storeEntryDraft } from '../src/features/dataEntry/drafts.js';
 import { inspectEntryCell } from '../src/features/dataEntry/service.js';
 import { inspectWorkbookZipArchive } from '../src/features/dataEntry/workbook.js';
 
 test('React source is separated from backend and fixture data', () => {
-  for (const name of ['mock', 'mocks', 'db', 'database', 'server.js']) {
-    assert.equal(fs.existsSync(new URL(`../src/${name}`, import.meta.url)), false);
+  for (const name of ['mock', 'mocks', 'db', 'database', 'server.js', 'app.js', 'cluster.js', 'shims']) {
+    assert.equal(fs.existsSync(new URL(`../src/${name}`, import.meta.url)), false, `src/${name} must not exist in Frontend`);
   }
 });
 
@@ -45,11 +61,13 @@ test('API client unwraps server responses and forwards pagination, abort signal 
 test('server RBAC profiles open accounts and employee tasks and honor department menus', async () => {
   const { canEditAccount, canOpenSection, homeSection, manageableRoles, navigationForRole } =
     await import('../src/utils/roles.js');
+  const ceo = { id: 'ceo', status: 'active', role: 'CEO', permissions: ['users.manage'] };
   const admin = { id: 'admin', status: 'active', role: 'Admin', permissions: ['users.manage'] };
   const sale = { id: 'sale', status: 'active', role: 'Sale', permissions: ['orders.read', 'tasks.read', 'dashboard.read'],
     navigation: ['tasks', 'orders'] };
   assert.equal(canOpenSection(admin, 'users'), true);
-  assert.deepEqual(manageableRoles(admin), ['Admin', 'Sale', 'Accountant']);
+  assert.deepEqual(manageableRoles(ceo), ['Sale', 'Accountant', 'CEO']);
+  assert.deepEqual(manageableRoles(admin), ['Sale', 'Accountant']);
   assert.equal(canEditAccount(admin, { id: 'another-ceo', role: 'CEO' }), false);
   assert.equal(canOpenSection(sale, 'tasks'), true);
   assert.equal(homeSection(sale), 'tasks');
@@ -90,7 +108,6 @@ test('logout sends the refresh token and prevents a previous session response fr
 });
 
 test('PO reference paging rejects a repeated cursor before a third request', async t => {
-  const { fetchOrderCollection } = await import('../src/features/orders/services/ordersService.js');
   const fetch = t.mock.method(globalThis, 'fetch', async () =>
     Response.json({ status: 'ok', data: { items: [{ rowId: 7 }], nextCursor: 7 } }));
   await assert.rejects(fetchOrderCollection(), /danh sách PO không hợp lệ/);
@@ -192,7 +209,6 @@ test('S03, S07, L01, L02, L05, X03, X08 direct-audit Frontend regressions', asyn
   const { getFulfillment, validateTracking } = await import('../src/utils/orderFulfillment.js');
   const { sanitizeExcelCellValue } = await import('../src/utils/exportExcel.js');
   const { signIn } = await import('../src/features/auth/services/authService.js');
-  const { saveEntryBatchApi } = await import('../src/services/api.js');
 
   // S03: canSendReminders requires 'reminders' section access
   assert.equal(canSendReminders({ id: 'u1', role: 'Sale', status: 'active', navigation: ['orders', 'reminders'] }), true);
@@ -261,4 +277,893 @@ test('S03, S07, L01, L02, L05, X03, X08 direct-audit Frontend regressions', asyn
   assert.equal(keysOn500[0], keysOn500[1], 'Must reuse Idempotency-Key after 500 error');
   assert.equal(batchRes.issues.length, 2, 'Must preserve all validation issues from Backend');
   clearAuthToken();
+});
+
+test('P1-04, P1-05, P1-08, P1-12, P1-15, P2-13 regressions: session-scoped useRemotePage key, refresh retry key, X-Data-Revision, cursor page helper & API endpoints', async t => {
+  // P1-04: useRemotePage requestKey changes immediately when token/session or actor scope changes
+  clearAuthToken();
+  setAuthToken('token-user-ceo-11111111', 'refresh-ceo');
+  const keyCeo = buildRemotePageRequestKey({
+    params: { section: 'receivables', filter: 'all' },
+    page: 1,
+    revision: 3,
+    sessionKey: getSessionIdentityKey(),
+    sessionScope: 'user-ceo',
+  });
+  const versionBeforeLogout = getSessionVersion();
+  clearAuthToken();
+  assert.equal(getSessionVersion(), versionBeforeLogout + 1);
+  setAuthToken('token-user-sale-22222222', 'refresh-sale');
+  const keySaleSameRevision = buildRemotePageRequestKey({
+    params: { section: 'receivables', filter: 'all' },
+    page: 1,
+    revision: 3,
+    sessionKey: getSessionIdentityKey(),
+    sessionScope: 'user-sale',
+  });
+  assert.notEqual(keyCeo, keySaleSameRevision, 'Different user sessions must never share remote page requestKey');
+
+  // P2-13: parseRetryAfterMs supports seconds and fallback
+  assert.equal(parseRetryAfterMs('2'), 2000);
+  assert.equal(parseRetryAfterMs('', 350), 350);
+
+  // P1-05 & P1-08 & P1-12: refresh sends X-Refresh-Retry-Id, apiRequest parses X-Data-Revision and canonicalizes trailing slash on Idempotency-Key
+  configureApi({ baseURL: 'http://localhost:4000/api/v1' });
+  setAuthToken('expired-access-token', 'valid-refresh-token');
+  let refreshHeaders = null;
+  let refreshBody = null;
+  const writeKeys = [];
+
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    const pathname = new URL(url).pathname;
+    if (pathname.endsWith('/auth/refresh')) {
+      refreshHeaders = options.headers;
+      refreshBody = JSON.parse(options.body);
+      return new Response(
+        JSON.stringify({
+          status: 'ok',
+          data: { token: 'fresh-access-token', refreshToken: 'fresh-refresh-token' },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    if (pathname.endsWith('/orders/items')) {
+      if (options.headers.Authorization === 'Bearer expired-access-token') {
+        return new Response(JSON.stringify({ message: 'Token expired' }), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(
+        JSON.stringify({
+          status: 'ok',
+          data: {
+            items: [{ rowId: 3500002 }],
+            nextCursor: null,
+            hasMore: false,
+            pagination: { page: 1, limit: 50, totalItems: 1, totalPages: 1, nextCursor: null, hasMore: false },
+          },
+        }),
+        {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Data-Revision': '42',
+          },
+        }
+      );
+    }
+    if (pathname.includes('/finance/invoices')) {
+      writeKeys.push(options.headers['Idempotency-Key']);
+      if (writeKeys.length === 1) {
+        return new Response(JSON.stringify({ message: 'Gateway Timeout' }), {
+          status: 504,
+          headers: { 'Content-Type': 'application/json', 'Retry-After': '0.05' },
+        });
+      }
+      return new Response(
+        JSON.stringify({
+          code: 'REQUEST_ALREADY_COMMITTED',
+          committedResult: { invoiceId: 'INV-REPLAY-1' },
+        }),
+        {
+          status: 409,
+          headers: { 'Content-Type': 'application/json', 'X-Data-Revision': '43' },
+        }
+      );
+    }
+    return new Response(
+      JSON.stringify({ status: 'ok', data: { ok: true, items: [] } }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } }
+    );
+  });
+
+  const pageData = await fetchOrdersPage({ limit: 50 });
+  assert.equal(pageData.items.length, 1);
+  assert.equal(pageData.hasMore, false);
+  assert.ok(refreshHeaders['X-Refresh-Retry-Id'], 'Must send X-Refresh-Retry-Id on /auth/refresh');
+  assert.equal(refreshHeaders['X-Refresh-Retry-Id'], refreshBody.retryKey);
+
+  // P1-12 & P2-13: Auto-retry with maxRetries=1 reuses identical Idempotency-Key and unwraps 409 REQUEST_ALREADY_COMMITTED replay
+  const writeReplay = await apiRequest(
+    'POST',
+    '/finance/invoices/',
+    { docNo: 'INV-01' },
+    { maxRetries: 1, retryDelayMs: 50 }
+  );
+  assert.equal(writeKeys.length, 2);
+  assert.equal(writeKeys[0], writeKeys[1]);
+  assert.equal(writeReplay.status, 200);
+  assert.equal(writeReplay.data.invoiceId, 'INV-REPLAY-1');
+  assert.equal(writeReplay.meta.dataRevision, 43);
+
+  // Verify new API helper endpoints
+  assert.ok(await fetchDashboardSummaryApi({ reportDate: '2026-11-06' }));
+  assert.ok(await previewOrderProgressApi(3500002, { nhap: 100 }));
+  assert.ok(await fetchAccountsApi({ page: 1 }));
+  assert.ok(await fetchTasksApi({ page: 1 }));
+  assert.ok(await fetchRemindersApi({ alertType: 'orders' }));
+  assert.ok(await fetchAuditLogsApi({ domain: 'finance' }));
+  clearAuthToken();
+});
+
+test('QA07, QA08, F5 JWT+Refresh Session Persistence, CEO Reminder Removal & AR/AP Full CRUD', async t => {
+  const {
+    executeFinanceActionApi,
+    getStoredAuthSession,
+    refreshSession,
+    AUTH_SESSION_STORAGE_KEY,
+  } = await import('../src/services/api.js');
+  const { readFileSync } = await import('node:fs');
+  const { restoreSessionOnLoad } = await import('../src/features/auth/services/authService.js');
+  const { canSendReminders, canAssignTasks } = await import('../src/features/operations/services/taskWorkflow.js');
+  const {
+    initialFinanceState,
+    createReceivable,
+    updateReceivable,
+    deleteReceivable,
+    recordPayable,
+    updatePayable,
+    deletePayable,
+  } = await import('../src/utils/financeWorkflow.js');
+
+  // 1. Role CEO: canSendReminders is false ("xóa chỗ gửi nhắc việc cho sếp") while canAssignTasks is true ("với điều kiện giao việc")
+  const ceoActor = {
+    id: 'user-ceo',
+    name: 'Lê Minh Quân',
+    role: 'CEO',
+    status: 'active',
+    permissions: ['dashboard.read', 'tasks.assign', 'receivables.allocate', 'payables.approve'],
+    navigation: ['overview', 'orders', 'receivables', 'payables', 'assignments', 'reminders'],
+  };
+  const saleActor = {
+    id: 'user-sale',
+    name: 'Lê Hương',
+    role: 'Sale',
+    status: 'active',
+    permissions: ['dashboard.read', 'orders.read', 'tasks.read'],
+    navigation: ['orders', 'tasks', 'reminders'],
+  };
+  assert.equal(canSendReminders(ceoActor), false, 'CEO must not have send-reminder capability');
+  assert.equal(canAssignTasks(ceoActor), true, 'CEO must retain full task assignment capability');
+  assert.equal(canSendReminders(saleActor), true, 'Sale retains send-reminder capability');
+
+  // 2. Local AR & AP CRUD workflow validation
+  let finState = initialFinanceState([], [], [], '2026-10-17');
+  finState = createReceivable(finState, ceoActor, {
+    docNo: 'AR-FE-001',
+    customerName: 'CÔNG TY NỘI THẤT ĐÔNG Á',
+    poId: 'UV-Intl-3500002',
+    sku: 'Ghế gỗ cao su',
+    category: 'Furniture',
+    dueDate: '2026-11-25',
+    originalAmount: 95000000,
+    commitmentNote: 'Đợt 1',
+  });
+  assert.equal(finState.receivables.length, 1);
+  const arRowId = finState.receivables[0].id;
+  finState = updateReceivable(finState, ceoActor, {
+    id: arRowId,
+    originalAmount: 110000000,
+    commitmentNote: 'Đã điều chỉnh hợp đồng',
+  });
+  assert.equal(finState.receivables[0].remaining, 110000000);
+  finState = deleteReceivable(finState, ceoActor, { id: arRowId });
+  assert.equal(finState.receivables.length, 0);
+
+  finState = recordPayable(finState, ceoActor, {
+    docNo: 'AP-FE-001',
+    vendorNo: '15090',
+    supplierName: 'NHÀ CUNG CẤP BAO BÌ VIỆT',
+    poId: 'UV-Intl-3500002',
+    sku: 'Thùng carton 5 lớp',
+    category: 'Packaging',
+    dueDate: '2026-11-28',
+    originalAmount: 45000000,
+    requestNote: 'Hóa đơn đợt 1',
+  });
+  assert.equal(finState.payables.length, 1);
+  const apRowId = finState.payables[0].id;
+  finState = updatePayable(finState, ceoActor, {
+    id: apRowId,
+    originalAmount: 52000000,
+    requestNote: 'Cập nhật phụ phí vận chuyển',
+  });
+  assert.equal(finState.payables[0].remaining, 52000000);
+  finState = deletePayable(finState, ceoActor, { id: apRowId });
+  assert.equal(finState.payables.length, 0);
+
+  // 3. QA08: Stable retryId across transient /auth/refresh failures + F5 Session Persistence with Expiry
+  const memStore = new Map();
+  globalThis.sessionStorage = {
+    getItem: k => memStore.get(k) ?? null,
+    setItem: (k, v) => memStore.set(k, String(v)),
+    removeItem: k => memStore.delete(k),
+  };
+  globalThis.localStorage = globalThis.sessionStorage;
+
+  configureApi({ baseURL: 'http://localhost:4000/api/v1' });
+  const now = Date.now();
+  setAuthToken('acc-initial', 'ref-initial', {
+    accessExpiresAt: now + 5000, // within 15s buffer so ensureValidSessionToken triggers refresh
+    refreshExpiresAt: now + 3600000,
+    accountId: 'user-ceo',
+  });
+  assert.ok(memStore.get(AUTH_SESSION_STORAGE_KEY));
+  assert.equal(getStoredAuthSession()?.accountId, 'user-ceo');
+
+  const seenRetryIds = [];
+  let refreshCallCount = 0;
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    const pathname = new URL(url).pathname;
+    if (pathname.endsWith('/auth/refresh')) {
+      refreshCallCount += 1;
+      seenRetryIds.push(options.headers['X-Refresh-Retry-Id']);
+      if (refreshCallCount === 1) {
+        return new Response(JSON.stringify({ message: 'Temporary 503' }), {
+          status: 503,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(
+        JSON.stringify({
+          status: 'ok',
+          data: {
+            token: 'acc-rotated-f5',
+            refreshToken: 'ref-rotated-f5',
+            accessExpiresAt: Date.now() + 900000,
+            refreshExpiresAt: Date.now() + 604800000,
+            account: ceoActor,
+          },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    if (pathname.endsWith('/directory/bootstrap')) {
+      return new Response(
+        JSON.stringify({
+          status: 'ok',
+          data: {
+            accounts: [{ ...ceoActor, home: 'overview' }],
+            tasks: [],
+            reminders: [],
+            departmentNavigation: {},
+          },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    if (pathname.endsWith('/operations/tasks')) {
+      // QA07: Backend AppError puts committedResult inside details.committedResult
+      return new Response(
+        JSON.stringify({
+          status: 'error',
+          code: 'REQUEST_ALREADY_COMMITTED',
+          message: 'Mã yêu cầu đã được ghi nhận.',
+          details: {
+            committedStatus: 'completed',
+            committedStatusCode: 201,
+            committedResult: {
+              committed: true,
+              task: { id: 'TASK-QA07-FE', title: 'Giao việc từ CEO' },
+            },
+          },
+        }),
+        { status: 409, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    if (pathname.includes('/finance/receivables') || pathname.includes('/finance/payables')) {
+      return new Response(
+        JSON.stringify({
+          status: 'ok',
+          data: { revision: 10, receivables: [], payables: [] },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    return new Response(JSON.stringify({ status: 'ok', data: {} }), { status: 200 });
+  });
+
+  const firstRefresh = await refreshSession();
+  assert.equal(firstRefresh.status, 'transient_error');
+  const restored = await restoreSessionOnLoad();
+  assert.equal(restored.status, 'authenticated');
+  assert.equal(restored.account.id, 'user-ceo');
+  assert.equal(seenRetryIds.length, 2);
+  assert.equal(seenRetryIds[0], seenRetryIds[1], 'QA08: Must reuse identical retryId for same refreshToken across transient retry');
+
+  // QA07: Unwraps details.committedResult and details.committedStatusCode (201)
+  const taskReplay = await apiRequest('POST', '/operations/tasks', { title: 'Giao việc từ CEO' });
+  assert.equal(taskReplay.status, 201);
+  assert.equal(taskReplay.data.task.id, 'TASK-QA07-FE');
+  assert.equal(taskReplay.meta.replayed, true);
+
+  // RESTful API CRUD calls via executeFinanceActionApi
+  assert.equal((await executeFinanceActionApi('create-receivable', { docNo: 'AR-1' })).revision, 10);
+  assert.equal((await executeFinanceActionApi('update-receivable', { id: 'AR-1', docNo: 'AR-1' })).revision, 10);
+  assert.equal((await executeFinanceActionApi('delete-receivable', { id: 'AR-1' })).revision, 10);
+  assert.equal((await executeFinanceActionApi('create-payable', { docNo: 'AP-1' })).revision, 10);
+  assert.equal((await executeFinanceActionApi('update-payable', { id: 'AP-1', docNo: 'AP-1' })).revision, 10);
+  assert.equal((await executeFinanceActionApi('delete-payable', { id: 'AP-1' })).revision, 10);
+
+  // Expired refreshExpiresAt logs out on F5
+  setAuthToken('acc-exp', 'ref-exp', {
+    accessExpiresAt: Date.now() - 10000,
+    refreshExpiresAt: Date.now() - 1000,
+    accountId: 'user-ceo',
+  });
+  assert.equal(getStoredAuthSession(), null);
+  clearAuthToken();
+});
+
+
+test('QA01-QA08 Audit v3 Regressions: sessionStorage-only tokens, strict principal check, rotated token preservation, backoff, minimal commit receipt reconciliation, 11-page PO loading, explicit PayableForm review decision, and Buffer-free JWT decoder', async t => {
+  const {
+    AUTH_SESSION_STORAGE_KEY,
+    clearAuthToken,
+    configureApi,
+    decodeJwtExpMs,
+    decodeJwtPayload,
+    executeFinanceActionApi,
+    getAuthToken,
+    getStoredAuthSession,
+    isFinanceSnapshotPayload,
+    refreshSession,
+    setAuthToken,
+  } = await import('../src/services/api.js');
+  const { readFileSync } = await import('node:fs');
+  const { restoreSessionOnLoad } = await import('../src/features/auth/services/authService.js');
+
+  // QA08: Verify api.js does not use Node-only Buffer identifier and decodes base64url JWT payloads
+  const apiSource = readFileSync(new URL('../src/services/api.js', import.meta.url), 'utf8');
+  assert.equal(/\bBuffer\b/.test(apiSource), false, 'QA08: api.js must not reference Buffer global');
+  const samplePayload = { sub: 'user-ceo', role: 'CEO', exp: 1893456000 };
+  const encodedPayload = btoa(JSON.stringify(samplePayload)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const sampleJwt = `eyJhbGciOiJIUzI1NiJ9.${encodedPayload}.sig`;
+  assert.equal(decodeJwtPayload(sampleJwt)?.sub, 'user-ceo');
+  assert.equal(decodeJwtExpMs(sampleJwt), 1893456000 * 1000);
+
+  // QA01: Tokens are stored ONLY in sessionStorage, never in localStorage
+  const sessionMap = new Map();
+  const localMap = new Map();
+  globalThis.sessionStorage = {
+    getItem: k => sessionMap.get(k) ?? null,
+    setItem: (k, v) => sessionMap.set(k, String(v)),
+    removeItem: k => sessionMap.delete(k),
+  };
+  globalThis.localStorage = {
+    getItem: k => localMap.get(k) ?? null,
+    setItem: (k, v) => localMap.set(k, String(v)),
+    removeItem: k => localMap.delete(k),
+  };
+
+  configureApi({ baseURL: 'http://localhost:4000/api/v1' });
+  const now = Date.now();
+  setAuthToken(sampleJwt, 'ref-qa01', {
+    accessExpiresAt: now + 600000,
+    refreshExpiresAt: now + 3600000,
+    accountId: 'user-ceo',
+  });
+  assert.ok(sessionMap.get(AUTH_SESSION_STORAGE_KEY), 'QA01: Must store session in sessionStorage');
+  assert.equal(localMap.get(AUTH_SESSION_STORAGE_KEY), undefined, 'QA01: Must NOT store tokens in localStorage');
+  sessionMap.delete(AUTH_SESSION_STORAGE_KEY);
+  localMap.set(AUTH_SESSION_STORAGE_KEY, JSON.stringify({ token: 'stale-local', refreshToken: 'stale-ref', accountId: 'user-ceo' }));
+  assert.equal(getStoredAuthSession(), null, 'QA01: Clearing tab sessionStorage must not restore from localStorage');
+  assert.equal(localMap.get(AUTH_SESSION_STORAGE_KEY), undefined, 'QA01: Stale localStorage session key is cleaned');
+
+  // QA02: restoreSessionOnLoad rejects mismatched principal instead of falling back to another active account
+  setAuthToken(sampleJwt, 'ref-qa02', {
+    accessExpiresAt: now + 600000,
+    refreshExpiresAt: now + 3600000,
+    accountId: 'user-ceo',
+  });
+  let bootstrapStep = 'wrong-account';
+  let bootstrapCalls = 0;
+  t.mock.method(globalThis, 'fetch', async url => {
+    const pathname = new URL(url).pathname;
+    if (pathname.endsWith('/directory/bootstrap')) {
+      bootstrapCalls += 1;
+      if (bootstrapStep === 'wrong-account') {
+        return Response.json({
+          status: 'ok',
+          data: {
+            accounts: [{ id: 'user-sale', name: 'Lê Hương', role: 'Sale', status: 'active', home: 'orders' }],
+            tasks: [],
+            reminders: [],
+          },
+        });
+      }
+      if (bootstrapStep === 'rotate-on-401' && bootstrapCalls === 1) {
+        return new Response(JSON.stringify({ message: 'Expired access token' }), { status: 401 });
+      }
+      return Response.json({
+        status: 'ok',
+        data: {
+          me: { id: 'user-ceo', name: 'Trần Quốc', role: 'CEO', status: 'active', home: 'overview' },
+          accounts: [{ id: 'user-ceo', name: 'Trần Quốc', role: 'CEO', status: 'active', home: 'overview' }],
+          tasks: [],
+          reminders: [],
+        },
+      });
+    }
+    if (pathname.endsWith('/auth/refresh')) {
+      if (bootstrapStep === 'transient-503') {
+        return new Response(JSON.stringify({ message: 'Server busy' }), {
+          status: 503,
+          headers: { 'Retry-After': '4', 'Content-Type': 'application/json' },
+        });
+      }
+      return Response.json({
+        status: 'ok',
+        data: {
+          token: 'acc-rotated-qa03',
+          refreshToken: 'ref-rotated-qa03',
+          accessExpiresAt: Date.now() + 900000,
+          refreshExpiresAt: Date.now() + 3600000,
+          account: { id: 'user-ceo', name: 'Trần Quốc', role: 'CEO', status: 'active', home: 'overview' },
+        },
+      });
+    }
+    if (pathname.endsWith('/finance/payables/AP-QA05/submit')) {
+      // QA05: Minimal idempotent replay receipt without finance snapshot
+      return Response.json({
+        status: 'ok',
+        data: { committed: true, dataRevision: 15 },
+      });
+    }
+    if (pathname.endsWith('/finance/state')) {
+      return Response.json({
+        status: 'ok',
+        data: {
+          revision: 15,
+          revenue: [],
+          receivables: [],
+          payables: [{ id: 'AP-QA05', docNo: 'BILL-QA05', approvalState: 'Chờ CEO duyệt chi' }],
+          receipts: [],
+          allocations: [],
+          payments: [],
+          audit: [{ id: 'AUD-15', type: 'PAYABLE_SUBMITTED', reference: 'BILL-QA05' }],
+        },
+      });
+    }
+    if (pathname.endsWith('/orders/items')) {
+      const searchParams = new URL(url).searchParams;
+      const cursor = Number(searchParams.get('cursor') || 0);
+      const pageIndex = Math.floor(cursor / 100) + 1;
+      const count = pageIndex < 11 ? 100 : 1;
+      const items = Array.from({ length: count }, (_, idx) => {
+        const rowId = cursor + idx + 1;
+        return { rowId, poId: `PO-${rowId}`, vendorNo: '15090', vendorItemNo: `SKU-${rowId}` };
+      });
+      const nextCursor = pageIndex < 11 ? cursor + count : null;
+      return Response.json({
+        status: 'ok',
+        data: { items, nextCursor, hasMore: nextCursor !== null },
+      });
+    }
+    return Response.json({ status: 'ok', data: {} });
+  });
+
+  const wrongRestore = await restoreSessionOnLoad();
+  assert.equal(wrongRestore.status, 'expired', 'QA02: Must reject when logged-in principal is missing from bootstrap');
+  assert.equal(getAuthToken(), null);
+
+  // QA03: Access token rotated during 401 on bootstrap is preserved after restoreSessionOnLoad completes
+  bootstrapStep = 'rotate-on-401';
+  bootstrapCalls = 0;
+  setAuthToken('acc-old-before-401', 'ref-valid-qa03', {
+    accessExpiresAt: now + 600000,
+    refreshExpiresAt: now + 3600000,
+    accountId: 'user-ceo',
+  });
+  const rotatedRestore = await restoreSessionOnLoad();
+  assert.equal(rotatedRestore.status, 'authenticated');
+  assert.equal(rotatedRestore.account.id, 'user-ceo');
+  assert.equal(getAuthToken(), 'acc-rotated-qa03', 'QA03: Newly rotated access token must not be overwritten by old token');
+  assert.equal(getStoredAuthSession()?.token, 'acc-rotated-qa03');
+
+  // QA04: Transient refresh error honors Retry-After / backoff and returns transient_error on restoreSessionOnLoad
+  bootstrapStep = 'transient-503';
+  setAuthToken('acc-near-exp', 'ref-transient-qa04', {
+    accessExpiresAt: Date.now() + 2000,
+    refreshExpiresAt: Date.now() + 3600000,
+    accountId: 'user-ceo',
+  });
+  const transientRestore = await restoreSessionOnLoad();
+  assert.equal(transientRestore.status, 'transient_error', 'QA04: Must surface transient_error instead of swallowing error');
+  assert.ok(transientRestore.retryAfterMs >= 4000, 'QA04: Must honor Retry-After backoff');
+
+  // QA05: Minimal commit receipt ({ committed: true, dataRevision }) is reconciled via GET /finance/state
+  bootstrapStep = 'ok';
+  setAuthToken('acc-rotated-qa03', 'ref-rotated-qa03', {
+    accessExpiresAt: Date.now() + 600000,
+    refreshExpiresAt: Date.now() + 3600000,
+    accountId: 'user-ceo',
+  });
+  const reconciledFin = await executeFinanceActionApi('submit', { id: 'AP-QA05', amount: 1000000, dueDate: '15/11/2026', note: 'Test QA05' });
+  assert.equal(isFinanceSnapshotPayload(reconciledFin), true, 'QA05: Must reconcile minimal receipt into full finance snapshot');
+  assert.equal(Array.isArray(reconciledFin.audit), true);
+  assert.equal(reconciledFin.payables[0].id, 'AP-QA05');
+
+  // QA06: 11 pages (1,001 POs) load completely without falling back to 100 rows
+  const allPos = await fetchOrderCollection(undefined, { limit: 100 });
+  assert.equal(allPos.length, 1001, 'QA06: Must load all 1,001 POs across 11 pages');
+  assert.equal(allPos[1000].rowId, 1001, 'QA06: Last PO #1001 must be present');
+
+  // QA07: PayableForm requires explicit 'approve' or 'return' decision on review submit
+  const formsSource = readFileSync(new URL('../src/components/finance/FinanceForms.jsx', import.meta.url), 'utf8');
+  assert.ok(formsSource.includes("explicitDecision !== 'approve' && explicitDecision !== 'return'"), 'QA07: Must guard against implicit submit without explicit decision');
+
+  clearAuthToken();
+});
+
+
+test('VPS01 & VPS07 Pre-Deploy Regressions: App.jsx imports fetchOrderHistory and separates ordersWarning from dataError', async () => {
+  const { readFileSync } = await import('node:fs');
+  const appSource = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
+  assert.match(appSource, /import\s*\{[^}]*fetchOrderHistory[^}]*\}\s*from\s*['"]\.\/features\/orders\/services\/ordersService\.js['"]/);
+  assert.ok(appSource.includes('const [ordersWarning, setOrdersWarning] = useState'), 'VPS07: Must separate ordersWarning from dataError');
+});
+
+
+test('Mục 04, 05, 06, 07, 08, 10, 11 Production Checklist Regressions (FE)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const appSource = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
+  const apiSource = readFileSync(new URL('../src/services/api.js', import.meta.url), 'utf8');
+  const htmlSource = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  const pkgJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+
+  // Mục 04: /orders/history/query does not attach write Idempotency-Key
+  assert.ok(apiSource.includes("const isReadOnlyPost = path === '/orders/history/query';"));
+
+  // Mục 08: App.jsx loads initial PO page via fetchOrdersPage and decouples PO loading from Finance loading
+  assert.ok(appSource.includes("fetchOrdersPage({ view: 'reference', limit: 100 }"));
+  assert.ok(appSource.includes('}, [isAuthenticated, currentAccountId, loadOrders, dataRevision]);'));
+  assert.ok(appSource.includes('}, [isAuthenticated, currentAccountId, loadFinance, dataRevision]);'));
+
+  // Mục 10: CSP in index.html and X-Requested-With + credentials: same-origin in api.js
+  assert.ok(htmlSource.includes('http-equiv="Content-Security-Policy"'));
+  assert.ok(apiSource.includes("'X-Requested-With': 'XMLHttpRequest'") || apiSource.includes("headers['X-Requested-With'] = 'XMLHttpRequest'"));
+  assert.ok(apiSource.includes("credentials: 'same-origin'"));
+
+  // Mục 11: Stable EMPTY_LIST reference and full test suite in package.json
+  assert.ok(appSource.includes('const EMPTY_LIST = Object.freeze([]);'));
+  assert.equal(pkgJson.scripts.test, 'node --test tests/*.test.js');
+});
+
+
+test('QA01, QA12, QA14, QA16 v1.1.0 Regressions (FE Role Matrix, Multi-page PO Reference, Order Detail Reconciliation)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { canEditAccount, manageableRoles } = await import('../src/utils/roles.js');
+
+  const activeCeo = { id: 'user-ceo', role: 'CEO', status: 'active' };
+  const activeAdmin = { id: 'user-admin', role: 'Admin', status: 'active' };
+  assert.deepEqual(manageableRoles(activeCeo), ['Sale', 'Accountant', 'CEO']);
+  assert.deepEqual(manageableRoles(activeAdmin), ['Sale', 'Accountant']);
+  assert.equal(canEditAccount(activeCeo, { id: 'ceo-2', role: 'CEO', status: 'active' }), true);
+  assert.equal(canEditAccount(activeCeo, { id: 'user-ceo', role: 'CEO', status: 'active' }), false);
+  assert.equal(canEditAccount(activeAdmin, { id: 'admin-2', role: 'Admin', status: 'active' }), false);
+  assert.equal(canEditAccount({ ...activeCeo, status: 'inactive' }, { id: 'u-sale', role: 'Sale', status: 'active' }), false);
+
+  const appSource = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
+  // QA12: Uses fetchOrdersPage first and automatically calls fetchOrderCollection when firstPage.hasMore is true
+  assert.ok(appSource.includes('if (!firstPage.hasMore || firstPage.nextCursor === null)'));
+  assert.ok(appSource.includes('startCursor: firstPage.nextCursor'));
+  // QA16: Handles both detail.item and direct detail object from fetchOrderDetailApi
+  assert.ok(appSource.includes('updated = detail?.item?.poId ? detail.item : detail?.poId ? detail : null;'));
+});
+
+
+test('Mục 05, 06, 07, 08 Kế hoạch sửa và deploy VPS v1.1.0 Regressions (FE)', async t => {
+  const { readFileSync } = await import('node:fs');
+  const { AUTH_SESSION_STORAGE_KEY, setAuthToken, clearAuthToken } = await import('../src/services/api.js');
+  const { fetchOrdersPage, fetchOrderCollection } = await import('../src/features/orders/services/ordersService.js');
+
+  // Mục 05: sessionStorage never contains refreshToken
+  const sessionMap = new Map();
+  globalThis.sessionStorage = {
+    getItem: k => sessionMap.get(k) ?? null,
+    setItem: (k, v) => sessionMap.set(k, String(v)),
+    removeItem: k => sessionMap.delete(k),
+  };
+  setAuthToken('acc-muc05', 'secret-refresh-token-muc05', {
+    accessExpiresAt: Date.now() + 600000,
+    refreshExpiresAt: Date.now() + 3600000,
+    accountId: 'user-ceo',
+  });
+  const storedRaw = sessionMap.get(AUTH_SESSION_STORAGE_KEY) || '';
+  assert.equal(storedRaw.includes('secret-refresh-token-muc05'), false, 'Mục 05: sessionStorage must NEVER store refreshToken');
+  clearAuthToken();
+
+  // Mục 08: 100 POs use 1 request; 1,001 POs use 11 requests (continuing from firstPage.nextCursor without re-fetching page 1)
+  let totalRows = 100;
+  let requestCount = 0;
+  t.mock.method(globalThis, 'fetch', async url => {
+    requestCount += 1;
+    const searchParams = new URL(url).searchParams;
+    const cursor = Number(searchParams.get('cursor') || 0);
+    const remaining = Math.max(0, totalRows - cursor);
+    const count = Math.min(100, remaining);
+    const items = Array.from({ length: count }, (_, idx) => {
+      const rowId = cursor + idx + 1;
+      return { rowId, poId: `PO-${rowId}`, vendorNo: '15090', vendorItemNo: `SKU-${rowId}` };
+    });
+    const nextCursor = cursor + count < totalRows ? cursor + count : null;
+    return Response.json({
+      status: 'ok',
+      data: { items, nextCursor, hasMore: nextCursor !== null },
+    });
+  });
+
+  // Case 1: 100 rows -> 1 request
+  requestCount = 0;
+  const page1For100 = await fetchOrdersPage({ view: 'reference', limit: 100 });
+  assert.equal(page1For100.hasMore, false);
+  assert.equal(requestCount, 1, 'Mục 08: 100 rows must use exactly 1 request');
+
+  // Case 2: 1,001 rows -> 11 requests total (Page 1 + 10 continuation pages)
+  totalRows = 1001;
+  requestCount = 0;
+  const firstPage = await fetchOrdersPage({ view: 'reference', limit: 100 });
+  assert.equal(firstPage.hasMore, true);
+  const all1001 = await fetchOrderCollection(undefined, {
+    maxPages: 100,
+    limit: 100,
+    initialItems: firstPage.items,
+    startCursor: firstPage.nextCursor,
+  });
+  assert.equal(all1001.length, 1001);
+  assert.equal(requestCount, 11, 'Mục 08: 1,001 rows must use exactly 11 requests (no duplicate page 1 fetch)');
+
+  // Mục 07: App.jsx blocks export when ordersLoading or incomplete
+  const appSource = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
+  assert.ok(appSource.includes('if (showOrders && ordersLoading)'));
+  assert.ok(appSource.includes('if (showOrders && (ordersHasMore || ordersIncomplete))'));
+});
+
+
+test('R01, R02, R04 Nghiệm thu v1.1.0 Pre-Deploy VPS Regressions (FE)', async t => {
+  const {
+    AUTH_SESSION_STORAGE_KEY,
+    computeProactiveRefreshDelayMs,
+    setAuthToken,
+    clearAuthToken,
+  } = await import('../src/services/api.js');
+  const { fetchOrderHistory } = await import('../src/features/orders/services/ordersService.js');
+
+  // R01: sessionStorage stores neither access token nor refreshToken
+  const sessionMap = new Map();
+  globalThis.sessionStorage = {
+    getItem: k => sessionMap.get(k) ?? null,
+    setItem: (k, v) => sessionMap.set(k, String(v)),
+    removeItem: k => sessionMap.delete(k),
+  };
+  const now = Date.now();
+  setAuthToken('in-memory-access-token-r01', null, {
+    accessExpiresAt: now + 120000,
+    refreshExpiresAt: now + 3600000,
+    accountId: 'user-ceo',
+  });
+  const rawStored = sessionMap.get(AUTH_SESSION_STORAGE_KEY) || '{}';
+  const parsedStored = JSON.parse(rawStored);
+  assert.equal(parsedStored.token, undefined, 'R01: Access token must stay in memory and NOT be written to sessionStorage');
+  assert.equal(parsedStored.refreshToken, undefined, 'R01: Refresh token must NOT be written to sessionStorage');
+  assert.equal(parsedStored.hasSession, true);
+
+  // R02: When access token has 120s left in cookie mode (refreshToken === null), proactive timer schedules at ~90s (never 600s!)
+  const delayMs = computeProactiveRefreshDelayMs(now);
+  assert.equal(delayMs, 90000, 'R02: Proactive refresh delay for 120s access token in cookie mode must be 90000ms (120s - 30s), not 600000ms');
+  clearAuthToken();
+
+  // R04: Exporting history for 2,001 POs uses 5 requests (batchSize=500) and automatically retries on 429 Retry-After
+  setAuthToken('acc-r04-export', null, {
+    accessExpiresAt: Date.now() + 600000,
+    refreshExpiresAt: Date.now() + 3600000,
+    accountId: 'user-ceo',
+  });
+  let historyCalls = 0;
+  let injected429 = false;
+  t.mock.method(globalThis, 'fetch', async () => {
+    historyCalls += 1;
+    if (historyCalls === 3 && !injected429) {
+      injected429 = true;
+      return new Response(JSON.stringify({ message: 'Too many requests' }), {
+        status: 429,
+        headers: { 'Retry-After': '0.05', 'Content-Type': 'application/json' },
+      });
+    }
+    return Response.json({
+      status: 'ok',
+      data: { items: [{ id: `H-${historyCalls}`, occurredAt: '2026-11-16T00:00:00Z' }] },
+    });
+  });
+  const items2001 = Array.from({ length: 2001 }, (_, idx) => ({ rowId: idx + 1 }));
+  const histResult = await fetchOrderHistory(items2001);
+  assert.equal(histResult.length, 5, 'R04: 2,001 POs must complete in 5 batches of <=500');
+  assert.equal(historyCalls, 6, 'R04: 5 batches + 1 automatic retry after 429');
+  clearAuthToken();
+});
+
+test('Mục 01, 02, 05 Báo cáo QA tổng hợp v1.1.0 Bản 2 Regressions (FE)', async t => {
+  const {
+    AUTH_SESSION_STORAGE_KEY,
+    clearAuthToken,
+    getAuthToken,
+    getRefreshToken,
+    hasActiveAuthSession,
+    logoutApi,
+    parseRetryAfterMs,
+  } = await import('../src/services/api.js');
+  const { fetchOrderHistory } = await import('../src/features/orders/services/ordersService.js');
+
+  // 1. Mục 01 (P1): Logout when only cookie + sessionStorage metadata exist (authToken === null, refreshToken === null in JS)
+  clearAuthToken();
+  globalThis.sessionStorage?.setItem?.(
+    AUTH_SESSION_STORAGE_KEY,
+    JSON.stringify({
+      hasSession: true,
+      accessExpiresAt: 0,
+      refreshExpiresAt: Date.now() + 3600_000,
+      accountId: 'user-ceo',
+      account: { id: 'user-ceo', role: 'CEO', status: 'active' },
+    })
+  );
+  assert.equal(getAuthToken(), null);
+  assert.equal(getRefreshToken(), null);
+  assert.equal(hasActiveAuthSession(), true);
+
+  let logoutCalls = 0;
+  let logoutCredentials = null;
+  let logoutHeaders = null;
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    if (String(url).endsWith('/auth/logout')) {
+      logoutCalls += 1;
+      logoutCredentials = options?.credentials;
+      logoutHeaders = options?.headers;
+      return new Response(JSON.stringify({ status: 'ok', data: { loggedOut: true } }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    return new Response(JSON.stringify({ status: 'ok', data: {} }), { status: 200 });
+  });
+
+  await logoutApi();
+  assert.equal(logoutCalls, 1, 'Mục 01: Must call POST /auth/logout even when only cookie metadata exists in sessionStorage');
+  assert.equal(logoutCredentials, 'same-origin');
+  assert.equal(logoutHeaders?.['X-Requested-With'], 'XMLHttpRequest');
+  assert.equal(globalThis.sessionStorage?.getItem?.(AUTH_SESSION_STORAGE_KEY), null);
+  assert.equal(hasActiveAuthSession(), false);
+
+  // 2. Mục 02: nginx.vps.conf includes HTTPS (443 ssl) and redirects HTTP (80) -> HTTPS
+  const nginxConf = fs.readFileSync(new URL('../nginx.vps.conf', import.meta.url), 'utf8');
+  assert.match(nginxConf, /listen\s+443\s+ssl/);
+  assert.match(nginxConf, /return\s+301\s+https:\/\/\$host\$request_uri/);
+  assert.match(nginxConf, /proxy_pass\s+http:\/\/127\.0\.0\.1:4000/);
+
+  // 3. Mục 05 (P2): parseRetryAfterMs does not clamp 30s to 10s, and fetchOrderHistory surfaces retry time when Retry-After exceeds deadline
+  assert.equal(parseRetryAfterMs('30'), 30000);
+  assert.equal(parseRetryAfterMs('60'), 60000);
+
+  let historyCallCount = 0;
+  t.mock.method(globalThis, 'fetch', async () => {
+    historyCallCount += 1;
+    return new Response(
+      JSON.stringify({ code: 'RATE_LIMITED', message: 'Quá giới hạn truy vấn báo cáo.' }),
+      {
+        status: 429,
+        headers: { 'Retry-After': '60', 'Content-Type': 'application/json' },
+      }
+    );
+  });
+
+  let rateErr = null;
+  try {
+    await fetchOrderHistory([{ rowId: 101 }], undefined, {
+      maxRetries: 3,
+      maxRetryWaitMs: 15000,
+      operationDeadlineMs: 20000,
+    });
+  } catch (err) {
+    rateErr = err;
+  }
+  assert.ok(rateErr, 'Mục 05: Must reject when Retry-After exceeds retry budget/deadline');
+  assert.equal(historyCallCount, 1, 'Mục 05: Must not wait in vain when Retry-After exceeds budget');
+  assert.equal(rateErr.status, 429);
+  assert.equal(rateErr.retryAfterMs, 60000);
+  assert.equal(rateErr.retryAfterSeconds, 60);
+  assert.equal(rateErr.exceededDeadline, true);
+  assert.match(rateErr.message, /thử lại sau 60 giây/i);
+
+  // Verify user cancellation during Retry-After wait aborts immediately
+  const abortCtrl = new AbortController();
+  t.mock.method(globalThis, 'fetch', async () => {
+    setTimeout(() => abortCtrl.abort(), 30);
+    return new Response(
+      JSON.stringify({ code: 'RATE_LIMITED', message: 'Tạm giới hạn.' }),
+      {
+        status: 429,
+        headers: { 'Retry-After': '5', 'Content-Type': 'application/json' },
+      }
+    );
+  });
+  await assert.rejects(
+    () => fetchOrderHistory([{ rowId: 102 }], abortCtrl.signal, { maxRetries: 3, maxRetryWaitMs: 30000 }),
+    { name: 'AbortError' }
+  );
+});
+
+test('F01, F02, D01 Báo cáo QA v1.1.0 Bản 3 Regressions (FE)', async t => {
+  const {
+    LOGOUT_BROADCAST_KEY,
+    parseCrossTabLogoutPayload,
+    clearAuthToken,
+    setAuthToken,
+    logoutApi,
+  } = await import('../src/services/api.js');
+  const { fetchOrderHistory } = await import('../src/features/orders/services/ordersService.js');
+
+  // F01: Multi-batch export MUST NOT start a second batch once operationDeadlineMs has expired
+  let batchFetchCalls = 0;
+  t.mock.method(globalThis, 'fetch', async () => {
+    batchFetchCalls += 1;
+    await new Promise(resolve => setTimeout(resolve, 60));
+    return new Response(JSON.stringify({ status: 'ok', data: { items: [] } }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  });
+  const itemsTwoBatches = Array.from({ length: 600 }, (_, i) => ({ rowId: i + 1 }));
+  await assert.rejects(
+    () => fetchOrderHistory(itemsTwoBatches, undefined, { batchSize: 500, operationDeadlineMs: 25 }),
+    { code: 'OPERATION_DEADLINE_EXCEEDED' }
+  );
+  assert.equal(batchFetchCalls, 1, 'F01: Must NOT fire batch 2 after operationDeadlineMs expires');
+
+  // F01: App.jsx passes exportController.signal to fetchOrderHistory
+  const appSource = fs.readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
+  assert.match(appSource, /fetchOrderHistory\s*\(\s*exportVendorItems\s*,\s*exportController\.signal\s*\)/);
+
+  // F02: App.jsx registers storage listener on LOGOUT_BROADCAST_KEY and logoutApi emits structured payload
+  assert.match(appSource, /addEventListener\s*\(\s*['"]storage['"]/);
+  assert.match(appSource, /LOGOUT_BROADCAST_KEY/);
+
+  clearAuthToken();
+  setAuthToken('access-tab-a', 'refresh-tab-a', { accountId: 'user-ceo' });
+  t.mock.method(globalThis, 'fetch', async () =>
+    new Response(JSON.stringify({ status: 'ok', data: { loggedOut: true } }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  );
+  await logoutApi();
+  const rawBroadcast = globalThis.localStorage?.getItem?.(LOGOUT_BROADCAST_KEY);
+  const parsedBroadcast = parseCrossTabLogoutPayload(rawBroadcast);
+  assert.equal(parsedBroadcast?.accountId, 'user-ceo');
+  assert.equal(parsedBroadcast?.serverRevoked, true);
+
+  // D01: nginx.vps.conf only declares erp.uyenvu-international.com (does not hijack main company domain)
+  const nginxConf = fs.readFileSync(new URL('../nginx.vps.conf', import.meta.url), 'utf8');
+  assert.match(nginxConf, /server_name\s+erp\.uyenvu-international\.com;/);
+  assert.doesNotMatch(nginxConf, /server_name\s+[^;]*\s+uyenvu-international\.com/);
 });

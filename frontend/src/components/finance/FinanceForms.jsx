@@ -1,5 +1,5 @@
 import { locale, phrase, t } from '../../locales/i18n.js';
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { HelpCircle } from 'lucide-react';
 import { businessToday, financeCustomers, needsPayableSplit, OPENING_RECEIPT_ID, payableSplitVendors } from '../../utils/financeWorkflow.js';
 import { dateInputValue } from '../../utils/business.js';
@@ -47,6 +47,143 @@ export function InvoiceForm({ finance, items, onAction, onClose }) {
   </form>;
 }
 
+/**
+ * Biểu mẫu Thêm mới / Cập nhật Công nợ phải thu (Accounts Receivable CRUD)
+ */
+export function ReceivableCrudForm({ mode = 'create', row = null, finance, items = [], onAction, onClose }) {
+  const isEdit = mode === 'edit' && Boolean(row);
+  const [selectedRowId, setSelectedRowId] = useState(() => (row?.poLineId ? String(row.poLineId) : ''));
+  const matchedOrder = items.find(it => String(it.rowId) === String(selectedRowId));
+  const customers = finance ? financeCustomers(finance) : [];
+  const hasAllocated = Number(row?.allocatedPaid || 0) > 0;
+
+  return <form className="workflow-form" onSubmit={event => {
+    const formVals = values(event);
+    const payload = {
+      ...(isEdit ? { id: row.id } : {}),
+      docNo: formVals.docNo,
+      customerName: formVals.customerName,
+      ...(formVals.rowId ? { rowId: Number(formVals.rowId) } : {
+        poId: formVals.poId,
+        sku: formVals.sku,
+        category: formVals.category,
+        vendorRef: formVals.vendorRef,
+      }),
+      dueDate: formVals.dueDate,
+      originalAmount: formVals.originalAmount,
+      ...(formVals.adjustment !== undefined && formVals.adjustment !== '' ? { adjustment: formVals.adjustment } : {}),
+      commitmentNote: formVals.commitmentNote || '',
+    };
+    onAction(isEdit ? 'update-receivable' : 'create-receivable', payload);
+  }}>
+    <div className="workflow-grid">
+      <label>{t("Số chứng từ phải thu")} <span className="required-mark" aria-hidden="true">*</span>
+        <input name="docNo" required maxLength={64} defaultValue={row?.docNo || ''} readOnly={hasAllocated} autoComplete="off" />
+      </label>
+      <label>{t("Khách hàng")} <span className="required-mark" aria-hidden="true">*</span>
+        <input name="customerName" required maxLength={200} defaultValue={row?.customerName || ''} readOnly={hasAllocated} list="ar-crud-customers" />
+        <datalist id="ar-crud-customers">{customers.map(name => <option key={name} value={name}>{t(name)}</option>)}</datalist>
+      </label>
+      <label className="workflow-wide">{t("Liên kết dòng PO & mã hàng (tuỳ chọn)")}
+        <select name="rowId" value={selectedRowId} onChange={e => setSelectedRowId(e.target.value)}>
+          <option value="">{t("-- Nhập thủ công thông tin PO bên dưới hoặc chọn dòng PO --")}</option>
+          {items.map(item => <option key={item.rowId} value={item.rowId}>{item.poId} · {t(item.vendorItemNo)} · {t(item.vendorName)}</option>)}
+        </select>
+      </label>
+      {!selectedRowId && <>
+        <label>{t("Mã PO tham chiếu")} <span className="required-mark" aria-hidden="true">*</span>
+          <input name="poId" required maxLength={64} defaultValue={row?.poId || matchedOrder?.poId || ''} placeholder="VD: UV-Intl-3500001" />
+        </label>
+        <label>{t("Mã hàng / Nội dung")} <span className="required-mark" aria-hidden="true">*</span>
+          <input name="sku" required maxLength={120} defaultValue={row?.sku || matchedOrder?.vendorItemNo || ''} placeholder={t("Tên hoặc mã mặt hàng")} />
+        </label>
+        <label>{t("Ngành hàng")}
+          <input name="category" maxLength={120} defaultValue={row?.category || matchedOrder?.category || 'Garment'} />
+        </label>
+        <label>{t("Nhà cung cấp liên quan")}
+          <input name="vendorRef" maxLength={200} defaultValue={row?.vendorRef || ''} placeholder="VD: 15090 - CONG TY TNHH..." />
+        </label>
+      </>}
+      <label>{t("Hạn thanh toán")} <span className="required-mark" aria-hidden="true">*</span>
+        <input name="dueDate" type="date" required defaultValue={dateInputValue(row?.dueDate) || businessToday()} />
+      </label>
+      <MoneyField name="originalAmount" label={t("Số tiền phải thu gốc")} defaultValue={row?.originalAmount || ''} />
+      {isEdit && <MoneyField name="adjustment" label={t("Tiền điều chỉnh (bỏ trống nếu 0)")} defaultValue={row?.adjustment || ''} required={false} />}
+      <label className="workflow-wide">{t("Ghi chú / Cam kết thanh toán")}
+        <textarea name="commitmentNote" maxLength={500} defaultValue={row?.commitmentNote || ''} placeholder={t("Ghi chú tiến độ thu hồi công nợ hoặc cam kết của khách hàng")} />
+      </label>
+    </div>
+    <Footer onClose={onClose} label={t(isEdit ? "Lưu cập nhật phải thu" : "Tạo khoản phải thu")} />
+  </form>;
+}
+
+/**
+ * Biểu mẫu Thêm mới / Cập nhật Công nợ phải trả (Accounts Payable CRUD)
+ */
+export function PayableCrudForm({ mode = 'create', row = null, items = [], onAction, onClose }) {
+  const isEdit = mode === 'edit' && Boolean(row);
+  const [selectedRowId, setSelectedRowId] = useState(() => (row?.poLineId ? String(row.poLineId) : ''));
+  const hasPaid = Number(row?.allocatedPaid || 0) > 0;
+
+  return <form className="workflow-form" onSubmit={event => {
+    const formVals = values(event);
+    const payload = {
+      ...(isEdit ? { id: row.id } : {}),
+      docNo: formVals.docNo,
+      ...(formVals.rowId ? { rowId: Number(formVals.rowId) } : {
+        poId: formVals.poId,
+        vendorNo: formVals.vendorNo,
+        supplierName: formVals.supplierName,
+        sku: formVals.sku,
+        category: formVals.category,
+      }),
+      dueDate: formVals.dueDate,
+      originalAmount: formVals.originalAmount,
+      ...(formVals.adjustment !== undefined && formVals.adjustment !== '' ? { adjustment: formVals.adjustment } : {}),
+      requestNote: formVals.requestNote || '',
+    };
+    onAction(isEdit ? 'update-payable' : 'payable', payload);
+  }}>
+    <div className="workflow-grid">
+      <label>{t("Số chứng từ phải trả")} <span className="required-mark" aria-hidden="true">*</span>
+        <input name="docNo" required maxLength={64} defaultValue={row?.docNo || ''} readOnly={hasPaid} autoComplete="off" />
+      </label>
+      <label>{t("Hạn thanh toán")}
+        <input name="dueDate" type="date" defaultValue={dateInputValue(row?.dueDate) || businessToday()} />
+      </label>
+      <label className="workflow-wide">{t("Liên kết dòng PO & nhà cung cấp")}
+        <select name="rowId" value={selectedRowId} onChange={e => setSelectedRowId(e.target.value)}>
+          <option value="">{t("-- Nhập thủ công nhà cung cấp bên dưới hoặc chọn từ danh sách PO --")}</option>
+          {items.map(item => <option key={item.rowId} value={item.rowId}>{item.poId} · {t(item.vendorItemNo)} · {item.vendorNo} - {t(item.vendorName)}</option>)}
+        </select>
+      </label>
+      {!selectedRowId && <>
+        <label>{t("Mã nhà cung cấp")} <span className="required-mark" aria-hidden="true">*</span>
+          <input name="vendorNo" required maxLength={120} defaultValue={row?.vendorNo || ''} placeholder="VD: 15090" />
+        </label>
+        <label>{t("Tên nhà cung cấp")} <span className="required-mark" aria-hidden="true">*</span>
+          <input name="supplierName" required maxLength={255} defaultValue={row?.supplierName || ''} placeholder="VD: CONG TY TNHH..." />
+        </label>
+        <label>{t("Mã PO tham chiếu")} <span className="required-mark" aria-hidden="true">*</span>
+          <input name="poId" required maxLength={255} defaultValue={row?.poId || ''} placeholder="VD: UV-Intl-3500001" />
+        </label>
+        <label>{t("Mã hàng / Nội dung")} <span className="required-mark" aria-hidden="true">*</span>
+          <input name="sku" required maxLength={255} defaultValue={row?.sku || ''} placeholder={t("Tên hoặc mã mặt hàng")} />
+        </label>
+        <label className="workflow-wide">{t("Ngành hàng")}
+          <input name="category" maxLength={120} defaultValue={row?.category || 'Garment'} />
+        </label>
+      </>}
+      <MoneyField name="originalAmount" label={t("Số tiền phải trả gốc")} defaultValue={row?.originalAmount || ''} />
+      {isEdit && <MoneyField name="adjustment" label={t("Tiền điều chỉnh (bỏ trống nếu 0)")} defaultValue={row?.adjustment || ''} required={false} />}
+      <label className="workflow-wide">{t("Ghi chú hồ sơ công nợ phải trả")}
+        <textarea name="requestNote" maxLength={500} defaultValue={row?.requestNote || ''} placeholder={t("Ghi chú đối chiếu công nợ nhà cung cấp hoặc điều khoản thanh toán")} />
+      </label>
+    </div>
+    <Footer onClose={onClose} label={t(isEdit ? "Lưu cập nhật phải trả" : "Tạo khoản phải trả")} />
+  </form>;
+}
+
 export function ReceiptWorkspace({ finance, onAction, onClose, initialDebtId }) {
   const targetDebt = finance.receivables.find(row => row.id === initialDebtId);
   const receipts = targetDebt ? finance.receipts.filter(row =>
@@ -66,7 +203,7 @@ export function ReceiptWorkspace({ finance, onAction, onClose, initialDebtId }) 
     if (targetDebt) payload.customerName = targetDebt.customerName;
     if (receipt) payload.id = receipt.id;
     const next = await onAction('receipt', payload, false);
-    if (next) {
+    if (next && Array.isArray(next.receipts)) {
       const reference = String(payload.reference ?? '').trim().toLowerCase();
       const savedReceipt = next.receipts.find(row => row.id === receipt?.id ||
         String(row.reference ?? '').toLowerCase() === reference);
@@ -126,19 +263,47 @@ export function ReceiptWorkspace({ finance, onAction, onClose, initialDebtId }) 
   </div>;
 }
 
-export function PayableForm({ type, row, onAction, onClose, actorId }) {
+export function PayableForm({ type, row, onAction, onClose, actorId, actorRole }) {
   const remaining = row.originalAmount + (row.adjustment || 0) - row.allocatedPaid;
   const action = type === 'SUBMIT_AP' ? 'submit' : type === 'REVIEW_AP' ? 'review' : 'pay';
+  const reviewDecisionRef = useRef(null);
+  const submitModeRef = useRef(null);
+  const [decisionError, setDecisionError] = useState('');
+  const isCeo = actorRole === 'CEO' || (!actorRole && actorId === 'user-ceo');
+  const selfApprovalBlocked = Boolean(row.requestedBy && row.requestedBy === actorId && !isCeo);
   return <form className="workflow-form" onSubmit={event => {
-    const approve = event.nativeEvent.submitter?.value === 'approve';
-    onAction(action, { ...values(event), id: row.id, approve });
+    const submitterVal = event.nativeEvent?.submitter?.value;
+    if (action === 'review') {
+      const explicitDecision = submitterVal ?? reviewDecisionRef.current;
+      reviewDecisionRef.current = null;
+      // QA07 Fix: Bắt buộc lựa chọn tường minh 'approve' hoặc 'return'; chặn implicit submit không rõ nút bấm
+      if (explicitDecision !== 'approve' && explicitDecision !== 'return') {
+        event.preventDefault();
+        setDecisionError('Vui lòng bấm rõ nút "Duyệt đề nghị" hoặc "Yêu cầu bổ sung".');
+        return;
+      }
+      const approve = explicitDecision === 'approve';
+      if (approve && (needsPayableSplit(row) || selfApprovalBlocked)) {
+        event.preventDefault();
+        return;
+      }
+      setDecisionError('');
+      onAction(action, { ...values(event), id: row.id, approve });
+      return;
+    }
+    const explicitMode = submitterVal ?? submitModeRef.current;
+    submitModeRef.current = null;
+    const approveDirectly = action === 'submit' && isCeo && explicitMode === 'approve_direct';
+    onAction(action, { ...values(event), id: row.id, ...(approveDirectly ? { approveDirectly: true } : {}) });
   }}>
     <p className="workflow-summary"><strong>{row.docNo} · {t(row.supplierName)}</strong><br />{t("Còn phải trả ")}{formatMoney(remaining)} · {t(row.approvalState)}</p>
     {needsPayableSplit(row) && <p className="workflow-callout">{t("Kế toán cần tách và đối soát chứng từ trước khi CEO duyệt chi.")}</p>}
     {action === 'submit' && <div className="workflow-grid"><MoneyField name="amount" label={t("Số tiền đề nghị")} max={remaining} defaultValue={remaining} /><label>{t("Hạn thanh toán đề nghị")} <span className="required-mark" aria-hidden="true">*</span><input name="dueDate" type="date" required defaultValue={dateInputValue(row.dueDate)} /></label><label className="workflow-wide">{t("Nội dung đề nghị")} <span className="required-mark" aria-hidden="true">*</span><textarea name="note" required maxLength={500} /></label></div>}
-    {action === 'review' && <><p className="review-amount">{t("Đề nghị ")}<strong>{formatMoney(row.requestAmount)}</strong>{t(" · Hạn đề nghị ")}{formatDate(row.requestedDueDate || row.dueDate)}</p><p>{t(row.requestNote || 'Hồ sơ chờ duyệt được chuyển từ dữ liệu mở đầu.')}</p>{row.requestedBy === actorId && <p className="workflow-callout">{t('Người lập đề nghị không được tự duyệt.')}</p>}<label>{t("Ý kiến xử lý")} <span className="required-mark" aria-hidden="true">*</span><textarea name="note" required maxLength={500} /></label><div className="workflow-footer"><button type="button" onClick={onClose}>{t("Hủy")}</button><button type="submit" value="return">{t("Yêu cầu bổ sung")}</button><button className="primary" type="submit" value="approve" disabled={needsPayableSplit(row) || row.requestedBy === actorId}>{t("Duyệt đề nghị")}</button></div></>}
+    {action === 'review' && <><p className="review-amount">{t("Đề nghị ")}<strong>{formatMoney(row.requestAmount)}</strong>{t(" · Hạn đề nghị ")}{formatDate(row.requestedDueDate || row.dueDate)}</p><p>{t(row.requestNote || 'Hồ sơ chờ duyệt được chuyển từ dữ liệu mở đầu.')}</p>{selfApprovalBlocked && <p className="workflow-callout">{t('Người lập đề nghị không được tự duyệt.')}</p>}<label>{t("Ý kiến xử lý")} <span className="required-mark" aria-hidden="true">*</span><textarea name="note" required maxLength={500} onChange={() => { if (decisionError) setDecisionError(''); }} /></label>{decisionError && <small className="field-hint is-error" role="alert">{t(decisionError)}</small>}<div className="workflow-footer"><button type="button" onClick={onClose}>{t("Hủy")}</button><button type="submit" name="reviewDecision" value="return" onClick={() => { reviewDecisionRef.current = 'return'; }}>{t("Yêu cầu bổ sung")}</button><button className="primary" type="submit" name="reviewDecision" value="approve" onClick={() => { reviewDecisionRef.current = 'approve'; }} disabled={needsPayableSplit(row) || selfApprovalBlocked}>{t("Duyệt đề nghị")}</button></div></>}
     {action === 'pay' && <div className="workflow-grid"><MoneyField name="amount" label={t("Số tiền đã chi")} max={Math.min(remaining, row.approvedRemaining)} /><label>{t("Ngày chi")} <span className="required-mark" aria-hidden="true">*</span><input name="date" type="date" required min={dateInputValue(row.reviewedDate) || undefined} max={businessToday()} defaultValue={businessToday()} /></label><label className="workflow-wide">{t("Tham chiếu ngân hàng hoặc phiếu chi")} <span className="required-mark" aria-hidden="true">*</span><input name="reference" required maxLength={120} /></label><p className="workflow-summary workflow-wide">{t("Hạn mức được duyệt còn lại ")}{formatMoney(row.approvedRemaining)}{t(". Ghi nhận sau khi có chứng từ chi tiền.")}</p></div>}
-    {action !== 'review' && <Footer onClose={onClose} label={t(action === 'submit' ? 'Trình CEO duyệt' : 'Ghi nhận khoản đã chi')} />}
+    {action === 'submit' && isCeo && <div className="workflow-footer"><button type="button" onClick={onClose}>{t("Hủy")}</button><button type="submit" name="submitMode" value="submit" onClick={() => { submitModeRef.current = 'submit'; }}>{t("Trình CEO duyệt")}</button><button className="primary" type="submit" name="submitMode" value="approve_direct" onClick={() => { submitModeRef.current = 'approve_direct'; }} disabled={needsPayableSplit(row)}>{t("Duyệt đề nghị")}</button></div>}
+    {action === 'submit' && !isCeo && <Footer onClose={onClose} label={t("Trình CEO duyệt")} />}
+    {action === 'pay' && <Footer onClose={onClose} label={t("Ghi nhận khoản đã chi")} />}
   </form>;
 }
 
@@ -173,5 +338,22 @@ export function SplitPayableForm({ row, items, onAction, onClose }) {
 
 export function FinanceHistory({ entries }) {
   if (!entries.length) return null;
-  return <details className="workflow-history"><summary>{t("Lịch sử xử lý gần đây")}</summary><ul>{entries.slice(-12).reverse().map(row => <li key={row.id}><strong>{t(({ INVOICE_RECORDED: 'Ghi nhận doanh thu', RECEIPT_IDENTIFIED: 'Đối soát khoản thu', RECEIPT_CORRECTED: 'Sửa đối soát khoản thu', RECEIPT_RECORDED: 'Ghi nhận khoản thu', RECEIPT_ALLOCATED: 'Phân bổ tiền thu', PAYABLE_RECORDED: 'Ghi nhận phải trả', PAYABLE_SUBMITTED: 'Trình đề nghị chi', PAYABLE_APPROVED: 'Duyệt chi', PAYABLE_RETURNED: 'Yêu cầu bổ sung', PAYABLE_PAID: 'Ghi nhận đã chi', PAYABLE_SPLIT: 'Tách chứng từ gộp' })[row.type] || row.type)}</strong> · {row.reference} · {row.actorName} · {new Intl.DateTimeFormat(locale(), { timeZone: 'Asia/Ho_Chi_Minh', dateStyle: 'short', timeStyle: 'short' }).format(new Date(row.occurredAt))}<br />{t(row.detail)}{row.amount !== null && ` · ${formatMoney(row.amount)}`}</li>)}</ul></details>;
+  return <details className="workflow-history"><summary>{t("Lịch sử xử lý gần đây")}</summary><ul>{entries.slice(-12).reverse().map(row => <li key={row.id}><strong>{t(({
+    INVOICE_RECORDED: 'Ghi nhận doanh thu',
+    RECEIVABLE_CREATED: 'Tạo công nợ phải thu',
+    RECEIVABLE_UPDATED: 'Cập nhật phải thu',
+    RECEIVABLE_DELETED: 'Xóa phải thu',
+    RECEIPT_IDENTIFIED: 'Đối soát khoản thu',
+    RECEIPT_CORRECTED: 'Sửa đối soát khoản thu',
+    RECEIPT_RECORDED: 'Ghi nhận khoản thu',
+    RECEIPT_ALLOCATED: 'Phân bổ tiền thu',
+    PAYABLE_RECORDED: 'Ghi nhận phải trả',
+    PAYABLE_UPDATED: 'Cập nhật phải trả',
+    PAYABLE_DELETED: 'Xóa phải trả',
+    PAYABLE_SUBMITTED: 'Trình đề nghị chi',
+    PAYABLE_APPROVED: 'Duyệt chi',
+    PAYABLE_RETURNED: 'Yêu cầu bổ sung',
+    PAYABLE_PAID: 'Ghi nhận đã chi',
+    PAYABLE_SPLIT: 'Tách chứng từ gộp',
+  })[row.type] || row.type)}</strong> · {row.reference} · {row.actorName} · {new Intl.DateTimeFormat(locale(), { timeZone: 'Asia/Ho_Chi_Minh', dateStyle: 'short', timeStyle: 'short' }).format(new Date(row.occurredAt))}<br />{t(row.detail)}{row.amount !== null && ` · ${formatMoney(row.amount)}`}</li>)}</ul></details>;
 }

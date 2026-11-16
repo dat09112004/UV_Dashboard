@@ -19,7 +19,7 @@ export const REMINDER_RESOLVED = 'Đã xử lý';
 export const isTaskEmployee = user => user?.status === 'active' && Object.hasOwn(TASK_DEPARTMENTS, user.role);
 export const canReceiveTasks = user => isTaskEmployee(user) && canOpenSection(user, 'tasks');
 export const canAssignTasks = user => isExecutiveRole(user?.role) && canOpenSection(user, 'assignments');
-export const canSendReminders = user => Boolean(user?.status === 'active' && (isTaskEmployee(user) || isExecutiveRole(user.role)) && canOpenSection(user, 'reminders'));
+export const canSendReminders = user => Boolean(user?.status === 'active' && user?.role !== 'CEO' && (isTaskEmployee(user) || isExecutiveRole(user.role)) && canOpenSection(user, 'reminders'));
 
 export function canManageTask(user, task, users) {
   if (!task || !canAssignTasks(user)) return false;

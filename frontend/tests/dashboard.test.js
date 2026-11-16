@@ -1,53 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { MOCK_ACCOUNTS } from '../src/mock/accounts.js';
-import { authenticateMockAccount, changeMockPassword } from '../src/features/auth/services/mockAuth.js';
-import { INITIAL_VENDOR_ITEMS as items, INITIAL_REVENUE_RECORDS as revenue, INITIAL_RECEIVABLES as ar, INITIAL_PAYABLES as ap, MONTHLY_REVENUE_CHART as history, DATA_AS_OF as date } from '../src/mock/dashboard.js';
+import { MOCK_ACCOUNTS } from './fixtures/accounts.js';
+import { INITIAL_VENDOR_ITEMS as items, INITIAL_REVENUE_RECORDS as revenue, INITIAL_RECEIVABLES as ar, INITIAL_PAYABLES as ap, MONTHLY_REVENUE_CHART as history, DATA_AS_OF as date } from './fixtures/dashboard.js';
 import { comparePriority, classifyDebt, classifyProgress, debtSummary, summarizeCategories, buildAlertQueue, sumBy, monthlyRevenueSeries, matchesOrigin, debtMatchesFilter } from '../src/utils/dashboardMetrics.js';
 
 const classifiedAr = ar.map(row => classifyDebt(row, date));
 const classifiedAp = ap.map(row => classifyDebt(row, date));
 const classifiedItems = items.map(row => classifyProgress(row, date));
 
-test('mock accounts are complete, distinct, and give task assignment to CEO and Admin', async () => {
+test('fixture accounts are complete, distinct, and give task assignment to CEO and Admin', () => {
   assert.equal(new Set(MOCK_ACCOUNTS.map(a => a.id)).size, 4);
   assert.equal(new Set(MOCK_ACCOUNTS.map(a => a.email)).size, 4);
   for (const account of MOCK_ACCOUNTS) {
-    for (const key of ['id', 'email', 'username', 'password', 'name', 'role', 'roleLabel', 'title', 'department', 'employeeCode', 'status', 'dataScope', 'timezone']) assert.ok(account[key]);
     assert.equal(account.permissions.includes('tasks.assign'), ['CEO', 'Admin'].includes(account.role));
-    assert.equal((await authenticateMockAccount(` ${account.email.toUpperCase()} `, account.password))?.id, account.id);
-    assert.equal(await authenticateMockAccount(account.email, 'invalid-password'), null);
   }
-  assert.equal(await authenticateMockAccount('unknown@uyenvu.vn', '123'), null);
-});
-
-test('demo password change requires the current password, replaces only that account, and stores no plaintext', async t => {
-  const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
-  const saved = new Map();
-  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: {
-    getItem: key => saved.get(key) ?? null,
-    setItem: (key, value) => saved.set(key, value),
-  } });
-  t.after(() => {
-    if (descriptor) Object.defineProperty(globalThis, 'localStorage', descriptor);
-    else delete globalThis.localStorage;
-  });
-  const [account, other] = MOCK_ACCOUNTS;
-  const password = 'example-demo-replacement';
-  assert.match(await changeMockPassword(account.id, account.password, 'short'), /8 đến 128/);
-  assert.match(await changeMockPassword(account.id, 'incorrect', password), /không đúng/);
-  assert.equal(saved.size, 0);
-  assert.equal(await changeMockPassword(account.id, account.password, password), null);
-  assert.equal(saved.size, 1);
-  assert.equal([...saved.values()][0].includes(password), false);
-  assert.equal(await authenticateMockAccount(account.email, account.password), null);
-  const profile = await authenticateMockAccount(account.email, password);
-  assert.equal(profile?.id, account.id);
-  assert.equal('password' in profile, false);
-  assert.equal((await authenticateMockAccount(other.email, other.password))?.id, other.id);
-  const [key] = saved.keys();
-  saved.set(key, '{}');
-  await assert.rejects(authenticateMockAccount(account.email, account.password), /Invalid demo credential/);
 });
 
 test('source amounts and exact industry names stay intact', () => {

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { payableAction, alertDestination, normalizeAmountInput, amountInputError, inspectQuantityInput, normalizeQuantityInput, computeProjectedProgress, splitNavigationItems, readPageGuideDismissed, storePageGuideDismissed } from '../src/utils/workspaceUi.js';
-import { readTaskHandoverDraft, storeTaskHandoverDraft, clearTaskHandoverDraft, filterTaskRows } from '../src/features/operations/services/taskWorkflow.js';
+import { filterTaskRows } from '../src/features/operations/services/taskWorkflow.js';
 import { AP_APPROVED, AP_PENDING, AP_REVIEW } from '../src/utils/financeWorkflow.js';
 
 test('warning actions keep the exact record and do not require filtering another module', () => {
@@ -81,12 +81,7 @@ test('quantity parser, projected progress, laptop navigation overflow, and task 
 
   const mem = new Map();
   const storage = { getItem: k => mem.get(k) ?? null, setItem: (k, v) => mem.set(k, v), removeItem: k => mem.delete(k) };
-  storeTaskHandoverDraft('user-sale', 'task-1', 'Đang soạn bàn giao PO 3500003', storage);
-  assert.equal(readTaskHandoverDraft('user-sale', 'task-1', storage), 'Đang soạn bàn giao PO 3500003');
-  assert.equal(readTaskHandoverDraft('user-accountant', 'task-1', storage), '');
-  assert.equal(readTaskHandoverDraft('user-sale', 'task-2', storage), '');
-  clearTaskHandoverDraft('user-sale', 'task-1', storage);
-  assert.equal(readTaskHandoverDraft('user-sale', 'task-1', storage), '');
+
 
   const sampleTasks = [
     { id: 't1', title: 'Đối chiếu tiến độ UV-Intl-3500003', description: 'Kiểm tra PO', assigneeId: 'user-sale', assignerId: 'user-ceo', deadline: '06/11/2026', status: 'Đang thực hiện' },

@@ -17,7 +17,7 @@ test('aging changes with report date and due excludes future or unknown deadline
   assert.equal(isDue(debtAtDate({ ...debt, dueDate: '—' }), '05/11/2026'), false);
 });
 test('on-time denominator includes undelivered overdue shipments and excludes future', () => {
-  const result = onTimeStats([{ etd: '01/11/2026', actualShip: '01/11/2026', qty: 20 }, { etd: '04/11/2026', actualShip: '—', qty: 20 }, { etd: '10/11/2026', actualShip: '—', qty: 20 }]);
+  const result = onTimeStats([{ etd: '01/11/2026', actualShip: '01/11/2026', qty: 20 }, { etd: '04/11/2026', actualShip: '—', qty: 20 }, { etd: '10/11/2026', actualShip: '—', qty: 20 }], '05/11/2026');
   assert.equal(result.rate, 50);
 });
 const task = { id: 'T1', status: 'Đang thực hiện', assignee: 'Lê Hương (Sale)', deadline: '04/11/2026', comments: [], proposedDeadline: '08/11/2026' };

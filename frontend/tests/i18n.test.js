@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { getLanguage, locale, phrase, setLanguage, subscribeLanguage, t, translate } from '../src/locales/i18n.js';
-import { INITIAL_VENDOR_ITEMS, INITIAL_REVENUE_RECORDS, INITIAL_RECEIVABLES, INITIAL_PAYABLES } from '../src/mock/dashboard.js';
+import { INITIAL_VENDOR_ITEMS, INITIAL_REVENUE_RECORDS, INITIAL_RECEIVABLES, INITIAL_PAYABLES } from './fixtures/dashboard.js';
 import { classifyDebt, formatMoney } from '../src/utils/dashboardMetrics.js';
 
 test('language switches update localized labels and formatters while preserving business codes', () => {

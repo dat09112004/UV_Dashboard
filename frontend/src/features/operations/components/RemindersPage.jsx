@@ -11,6 +11,7 @@ import { isExecutiveRole } from '../../../utils/roles.js';
 import {
   canAssignTasks,
   canReceiveTasks,
+  canSendReminders,
   REMINDER_ASSIGNED,
   REMINDER_PENDING,
   resolveAlertAssignmentInfo,
@@ -211,12 +212,15 @@ export default function RemindersPage({
   busy = false,
   onAction,
   onOpenAlert,
+  onAssignAlert,
   onNavigate,
   initialDraft = null,
   onClearDraft,
 }) {
   const today = businessToday();
   const isExec = isExecutiveRole(actor?.role) && canAssignTasks(actor);
+  // Yêu cầu người dùng: Ở role CEO tại giao diện Nhắc việc, xóa hoàn toàn chỗ "Gửi nhắc việc cho sếp" nhưng giữ nguyên đầy đủ điều kiện Giao việc
+  const canRemindBoss = canSendReminders(actor) && actor?.role !== 'CEO';
   const people = useMemo(() => accounts.filter(canReceiveTasks), [accounts]);
   const redAlerts = useMemo(() => alerts.filter(a => a.data?.priorityRank === 0), [alerts]);
 
@@ -229,7 +233,7 @@ export default function RemindersPage({
   const debouncedStatusFilter = useDebouncedValue(statusFilter, 150);
   const debouncedTypeFilter = useDebouncedValue(typeFilter, 150);
 
-  const [showCreateForm, setShowCreateForm] = useState(Boolean(initialDraft));
+  const [showCreateForm, setShowCreateForm] = useState(Boolean(initialDraft && canRemindBoss));
   const [selectedAlertKey, setSelectedAlertKey] = useState(() => initialDraft?.alertId || '');
   const [customReference, setCustomReference] = useState(() => initialDraft?.reference || '');
   const [customType, setCustomType] = useState(() => initialDraft?.alertType || 'orders');
@@ -252,6 +256,7 @@ export default function RemindersPage({
 
   const submitReminder = async event => {
     event.preventDefault();
+    if (!canRemindBoss) return;
     setFormError('');
     const ok = await onAction('create-reminder', {
       alertId: selectedAlertKey || `${customType}-${customReference.trim()}`,
@@ -357,14 +362,16 @@ export default function RemindersPage({
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setShowCreateForm(open => !open)}
-            className="row-primary-button flex items-center gap-1.5"
-          >
-            <BellRing size={16} />
-            <span>{t(showCreateForm ? 'Đóng khung nhắc việc' : '+ Gửi nhắc việc cho Sếp')}</span>
-          </button>
+          {canRemindBoss && (
+            <button
+              type="button"
+              onClick={() => setShowCreateForm(open => !open)}
+              className="row-primary-button flex items-center gap-1.5"
+            >
+              <BellRing size={16} />
+              <span>{t(showCreateForm ? 'Đóng khung nhắc việc' : '+ Gửi nhắc việc cho Sếp')}</span>
+            </button>
+          )}
           {isExec && (
             <button
               type="button"
@@ -378,7 +385,7 @@ export default function RemindersPage({
         </div>
       </header>
 
-      {(showCreateForm || initialDraft) && (
+      {canRemindBoss && (showCreateForm || initialDraft) && (
         <section className="analytics-card bg-amber-50/60 border border-amber-300 p-5 rounded-xl space-y-4">
           <div className="flex items-center justify-between border-b border-amber-200 pb-3">
             <div className="flex items-center gap-2">
@@ -728,7 +735,7 @@ export default function RemindersPage({
           <div>
             <h2 className="text-base font-bold text-slate-900 m-0">{t('Cảnh báo đỏ trên hệ thống & Trạng thái người đảm nhận')}</h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              {t('Hiển thị đầy đủ các cảnh báo đỏ hiện có kèm dòng trạng thái nhỏ in nghiêng để mọi bộ phận theo dõi và nhắc việc khi cần.')}
+              {t('Hiển thị đầy đủ các cảnh báo đỏ hiện có kèm dòng trạng thái nhỏ in nghiêng để mọi bộ phận theo dõi và điều phối xử lý.')}
             </p>
           </div>
         </div>
@@ -755,8 +762,9 @@ export default function RemindersPage({
                     tasks={tasks}
                     accounts={accounts}
                     reminders={reminders}
-                    canRemind={true}
+                    canRemind={canRemindBoss}
                     onRemind={() => {
+                      if (!canRemindBoss) return;
                       setSelectedAlertKey(alert.id);
                       setCustomReference(alert.reference);
                       setCustomType(alert.type);
@@ -769,6 +777,16 @@ export default function RemindersPage({
                   />
                 </div>
                 <div className="flex items-center justify-end gap-2 pt-1 border-t border-slate-100">
+                  {isExec && onAssignAlert && (
+                    <button
+                      type="button"
+                      onClick={() => onAssignAlert(alert)}
+                      className="row-detail-button text-xs flex items-center gap-1"
+                    >
+                      <ClipboardPlus size={13} />
+                      <span>{t('Giao việc')}</span>
+                    </button>
+                  )}
                   {onOpenAlert && (
                     <button
                       type="button"

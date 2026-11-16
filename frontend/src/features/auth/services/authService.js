@@ -1,5 +1,14 @@
 import {
-  changePasswordApi, clearAuthToken, fetchBootstrapApi, loginApi, setAuthToken,
+  changePasswordApi,
+  clearAuthToken,
+  decodeJwtPayload,
+  ensureValidSessionToken,
+  fetchBootstrapApi,
+  getAuthToken,
+  getStoredAuthSession,
+  loginApi,
+  setAuthToken,
+  updateSessionAccount,
 } from '../../../services/api.js';
 
 export async function signIn(
@@ -23,15 +32,114 @@ export async function signIn(
     throw error;
   }
   if (response.status === 423) return { status: 'locked' };
-  const { token, refreshToken, account } = response.data;
+  const {
+    token,
+    refreshToken,
+    account,
+    accessExpiresAt,
+    refreshExpiresAt,
+    expiresIn,
+    refreshExpiresIn,
+  } = response.data;
   if (!token || !account) throw new Error('Phản hồi đăng nhập không hợp lệ.');
-  setAuthToken(token, refreshToken);
+  setAuthToken(token, refreshToken, {
+    accessExpiresAt,
+    refreshExpiresAt,
+    expiresIn,
+    refreshExpiresIn,
+    accountId: account.id,
+    account,
+  });
   try {
     const directory = await fetchBootstrapApi();
     return { status: 'authenticated', account, homeSection: account.home, directory };
   } catch (error) {
     clearAuthToken();
     throw error;
+  }
+}
+
+/**
+ * QA02 + QA03 + QA04 Fix:
+ * - Khôi phục phiên đăng nhập từ sessionStorage của tab hiện tại.
+ * - Đối chiếu nghiêm ngặt principal qua directory.me, stored.accountId và jwt.sub; tuyệt đối không fallback sang tài khoản active khác (QA02).
+ * - Không ghi đè lại access token cũ sau khi fetchBootstrapApi đã xoay vòng token mới (QA03).
+ * - Trả về trạng thái lỗi tạm thời (transient_error) khi mạng/server gián đoạn để giao diện hiển thị nút Thử lại (QA04).
+ */
+export async function restoreSessionOnLoad() {
+  const stored = getStoredAuthSession();
+  if (!stored) return { status: 'anonymous' };
+
+  setAuthToken(stored.token, stored.refreshToken, {
+    accessExpiresAt: stored.accessExpiresAt,
+    refreshExpiresAt: stored.refreshExpiresAt,
+    accountId: stored.accountId,
+    account: stored.account,
+  });
+
+  try {
+    const tokenStatus = await ensureValidSessionToken();
+    if (tokenStatus.status === 'expired' || tokenStatus.status === 'anonymous') {
+      clearAuthToken();
+      return { status: 'expired' };
+    }
+    if (tokenStatus.status === 'transient_error') {
+      return {
+        status: 'transient_error',
+        message: tokenStatus.message || 'Kết nối tạm thời gián đoạn khi làm mới phiên đăng nhập.',
+        retryAfterMs: tokenStatus.retryAfterMs || 1500,
+      };
+    }
+
+    const directory = await fetchBootstrapApi();
+    const accounts = Array.isArray(directory?.accounts) ? directory.accounts : [];
+    const currentJwt = getAuthToken() || tokenStatus.token || stored.token;
+    const jwtSub = decodeJwtPayload(currentJwt)?.sub || null;
+    const storedId = stored.accountId || stored.account?.id || null;
+    const bootstrapMeId = directory?.me?.id || null;
+
+    if (
+      (storedId && jwtSub && storedId !== jwtSub) ||
+      (storedId && bootstrapMeId && storedId !== bootstrapMeId) ||
+      (jwtSub && bootstrapMeId && jwtSub !== bootstrapMeId)
+    ) {
+      clearAuthToken();
+      return { status: 'expired' };
+    }
+
+    const expectedId = bootstrapMeId || jwtSub || storedId;
+    if (!expectedId) {
+      clearAuthToken();
+      return { status: 'expired' };
+    }
+
+    const matched =
+      accounts.find(acc => acc.id === expectedId && acc.status === 'active') ||
+      (directory?.me?.id === expectedId && directory.me.status === 'active' ? directory.me : null);
+
+    if (!matched || (storedId && matched.id !== storedId)) {
+      clearAuthToken();
+      return { status: 'expired' };
+    }
+
+    // QA03 Fix: Chỉ cập nhật thông tin tài khoản, giữ nguyên bộ token mới nhất do lớp API quản lý
+    updateSessionAccount(matched);
+
+    return {
+      status: 'authenticated',
+      account: matched,
+      homeSection: matched.home,
+      directory,
+    };
+  } catch (error) {
+    if (error?.status === 401 || error?.status === 403 || error?.code === 'SESSION_EXPIRED') {
+      clearAuthToken();
+      return { status: 'expired' };
+    }
+    return {
+      status: 'transient_error',
+      message: error?.message || 'Không thể kết nối máy chủ để khôi phục phiên đăng nhập.',
+    };
   }
 }
 

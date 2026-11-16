@@ -1,14 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { INITIAL_VENDOR_ITEMS as items, INITIAL_REVENUE_RECORDS as revenue, INITIAL_RECEIVABLES as ar, INITIAL_PAYABLES as ap, DATA_AS_OF as today } from '../src/mock/dashboard.js';
-import { MOCK_ACCOUNTS } from '../src/mock/accounts.js';
-import { initialFinanceState, recordInvoice, saveReceipt, allocateReceipt, submitPayable, splitPayable, reviewPayable, recordPayablePayment, persistFinanceState, loadFinanceState, validateFinanceState, FINANCE_STORAGE_KEY, AP_PENDING, AP_APPROVED, AP_REVIEW, AP_RETURNED, itemFinancialSummary } from '../src/utils/financeWorkflow.js';
+import { INITIAL_VENDOR_ITEMS as items, INITIAL_REVENUE_RECORDS as revenue, INITIAL_RECEIVABLES as ar, INITIAL_PAYABLES as ap, DATA_AS_OF as today } from './fixtures/dashboard.js';
+import { MOCK_ACCOUNTS } from './fixtures/accounts.js';
+import { initialFinanceState, recordInvoice, saveReceipt, allocateReceipt, submitPayable, splitPayable, reviewPayable, recordPayablePayment, validateFinanceState, AP_PENDING, AP_APPROVED, AP_REVIEW, AP_RETURNED, itemFinancialSummary } from '../src/utils/financeWorkflow.js';
 import { classifyDebt, debtSummary, classifyProgress, matchesOrigin } from '../src/utils/dashboardMetrics.js';
 import { updateProgressRecord, loadTrackedItems } from '../src/utils/orderFulfillment.js';
 import { setupInterceptors } from '../src/services/interceptors.js';
 import { setClientIdentity } from '../src/utils/permissions.js';
 const [ceo, sale, accountant, admin] = MOCK_ACCOUNTS;
-const base=()=>initialFinanceState(revenue,ar,ap,today);
+const base=()=>({ ...initialFinanceState(revenue,ar,ap,today), receipts: [{ id: 'PMT-2026-001', reference: null, customerName: null, amount: 25000000, allocatedAmount: 0, date: today, currency: 'VND', status: 'unidentified' }] });
 const invoice={rowId:19,docNo:'INV-TEST',customerName:ar[0].customerName,recordDate:today,dueDate:'2026-11-12',shippedQty:0,netRevenue:48000000,basis:'Biên bản nghiệm thu mẫu đã xác nhận'};
 const identified=()=>saveReceipt(base(),accountant,{id:'PMT-2026-001',customerName:ar[0].customerName,reference:'BANK-IN-001',date:today},today);
 const memory=()=>{ const map=new Map(); return {getItem:k=>map.get(k)??null,setItem:(k,v)=>map.set(k,v)}; };
@@ -98,12 +98,7 @@ test('approved payment budget survives partial payments and prevents duplicate o
  const early=base();early.openingDate='2026-11-01';const reviewed=reviewPayable(early,ceo,{id:'AP-02',approve:true,note:'Đã đối soát'},today);
  assert.throws(()=>recordPayablePayment(reviewed,accountant,{id:'AP-02',amount:1,date:'2026-11-04',reference:'OLD-DATE'},today),/trước ngày duyệt/);
 });
-test('finance state restores a whole transaction and rejects stale browser updates',()=>{
- const storage=memory(),next=recordInvoice(base(),accountant,invoice,items,today);
- persistFinanceState(next,storage);const restored=loadFinanceState(base(),storage);
- assert.equal(restored.revenue.length,7);assert.equal(restored.receivables.length,6);assert.equal(restored.audit.length,1);
- assert.throws(()=>persistFinanceState(recordInvoice(base(),accountant,{...invoice,docNo:'INV-OTHER'},items,today),storage),/cửa sổ khác/);
- storage.setItem(FINANCE_STORAGE_KEY,'{bad');const invalid=loadFinanceState(base(),storage);assert.ok(invalid.loadIssue);assert.throws(()=>recordInvoice(invalid,accountant,invoice,items,today));
+test('validateFinanceState rejects over-allocated receipts',()=>{
  assert.throws(()=>validateFinanceState({...base(),receipts:[{id:'bad',amount:1,allocatedAmount:2,currency:'VND'}]}));
 });
 test('progress updates preserve the source sales value and do not latch a computed alert',()=>{
