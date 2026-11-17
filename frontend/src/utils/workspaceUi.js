@@ -220,3 +220,22 @@ export function storePageGuideDismissed(userId, section, dismissed, storage = gl
     return false;
   }
 }
+
+const ALLOCATION_GUIDE_KEY = 'uv:allocation-guide-dismissed';
+
+export function isAllocationGuideDismissed() {
+  try {
+    return globalThis.localStorage?.getItem?.(ALLOCATION_GUIDE_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+export function storeAllocationGuideDismissed(dismissed) {
+  try {
+    if (dismissed) globalThis.localStorage?.setItem?.(ALLOCATION_GUIDE_KEY, 'true');
+    else globalThis.localStorage?.removeItem?.(ALLOCATION_GUIDE_KEY);
+  } catch {
+    // Ignore storage errors
+  }
+}

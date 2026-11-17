@@ -12,7 +12,7 @@ export const NAV_ITEMS = [
   { id: 'receivables', label: 'Công nợ phải thu', icon: Wallet },
   { id: 'payables', label: 'Công nợ phải trả', icon: CreditCard },
   { id: 'reminders', label: 'Nhắc việc', icon: BellRing },
-  { id: 'data-entry', label: 'Nhập liệu Excel', icon: Sheet },
+  { id: 'data-entry', label: 'Đơn hàng', icon: Sheet },
   { id: 'users', label: 'Quản lý tài khoản', icon: Users },
   { id: 'tasks', label: 'Công việc của tôi', icon: ClipboardList },
   { id: 'assignments', label: 'Giao việc', icon: ClipboardList },

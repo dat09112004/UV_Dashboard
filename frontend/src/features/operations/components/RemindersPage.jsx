@@ -569,22 +569,20 @@ export default function RemindersPage({
               {t('Mọi vai trò đều theo dõi được trạng thái đã giao hay chưa. Admin và CEO có thể giao việc nhanh kèm ghi chú trực tiếp tại từng mục.')}
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-2 text-xs">
-            <label className="inline-flex items-center gap-1.5 border border-slate-300 rounded-lg bg-white px-2.5 h-9">
-              <Search size={14} className="text-slate-400" />
+          <div className="management-toolbar">
+            <label className="management-toolbar-search">
+              <Search size={14} className="text-slate-400 shrink-0" />
               <input
                 type="search"
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
                 placeholder={t('Tìm mã PO, chứng từ, người nhắc…')}
-                className="outline-none bg-transparent text-xs w-44"
               />
             </label>
             <select
               value={typeFilter}
               onChange={e => setTypeFilter(e.target.value)}
               aria-label={t('Lọc phân hệ nhắc việc')}
-              className="h-9 rounded-lg border border-slate-300 bg-white px-2.5 text-xs text-slate-800"
             >
               <option value="all">{t('Tất cả phân hệ')}</option>
               <option value="orders">{t('Đơn hàng & Tiến độ')}</option>

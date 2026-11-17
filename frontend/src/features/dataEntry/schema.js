@@ -27,9 +27,9 @@ export const ENTRY_SHEETS = [
     doc, lineId, po, customer, col('recordDate', 'Ngày ghi nhận', 'date'), due, col('shippedQty', 'SL đã xuất', 'number'),
     col('netRevenue', 'Doanh thu thuần', 'number', ['Net revenue']), col('basis', 'Căn cứ ghi nhận'),
   ], extra: [col('cashCollected', 'Thực thu', 'number')] },
-  { id: 'receivables', label: 'Công nợ phải thu', name: 'Phai_thu', section: 'receivables', columns: [
-    doc, po, customer, due, col('originalAmount', 'Số tiền gốc', 'number'), col('allocatedPaid', 'Đã thu', 'number'), remaining,
-  ] },
+  { id: 'receivables', label: 'Công nợ phải thu', name: 'Phai_thu', section: 'receivables', write: 'receivables.allocate', columns: [
+    doc, lineId, po, customer, due, col('originalAmount', 'Số tiền gốc', 'number'),
+  ], extra: [col('allocatedPaid', 'Đã thu', 'number'), remaining] },
   { id: 'payables', label: 'Công nợ phải trả', name: 'Phai_tra', section: 'payables', write: 'payables.submit', needsOrders: true, columns: [
     doc, lineId, po, due, col('originalAmount', 'Số tiền gốc', 'number'),
   ], extra: [col('supplierName', 'Nhà cung cấp'), col('allocatedPaid', 'Đã trả', 'number'), remaining, col('approvalState', 'Trạng thái duyệt')] },
@@ -46,6 +46,7 @@ export const ENTRY_SHEETS = [
 ];
 
 export const canReadSheet = (user, sheet) => sheet.id === 'tasks'
-  ? canOpenSection(user, 'assignments') || canOpenSection(user, 'tasks') : canOpenSection(user, sheet.section);
+  ? canOpenSection(user, 'assignments') || canOpenSection(user, 'tasks')
+  : canOpenSection(user, sheet.section) || (sheet.section === 'orders' && can(user, 'orders.read'));
 export const canWriteSheet = (user, sheet) => canReadSheet(user, sheet) && Boolean(sheet.write) &&
-  can(user, sheet.write) && (!sheet.needsOrders || canOpenSection(user, 'orders'));
+  can(user, sheet.write) && (!sheet.needsOrders || can(user, 'orders.read') || canOpenSection(user, 'orders'));

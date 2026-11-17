@@ -63,7 +63,7 @@ const panelSection = panel => ({
   SPLIT_AP: 'payables', SUBMIT_AP: 'payables', REVIEW_AP: 'payables', PAY_AP: 'payables',
 })[panel.type] || panel.debtType;
 const canOpenPanel = (user, panel) => canOpenSection(user, panelSection(panel)) &&
-  (!['RECORD_REV', 'SPLIT_AP'].includes(panel.type) || canOpenSection(user, 'orders'));
+  (!['RECORD_REV', 'SPLIT_AP'].includes(panel.type) || can(user, 'orders.read') || canOpenSection(user, 'orders'));
 
 const formatVnd = (val) => {
   if (val === null || val === undefined || val === '—') return '—';
@@ -126,6 +126,7 @@ export default function App() {
   const currentRole = currentUser?.role;
   const canUpdateProgress = can(currentUser, 'orders.update') && canOpenSection(currentUser, 'orders');
   const showOrders = canOpenSection(currentUser, 'orders');
+  const canReadOrdersData = showOrders || can(currentUser, 'orders.read');
   const showRevenue = canOpenSection(currentUser, 'revenue');
   const showReceivables = canOpenSection(currentUser, 'receivables');
   const showPayables = canOpenSection(currentUser, 'payables');
@@ -133,7 +134,7 @@ export default function App() {
   const canRemindBoss = showReminders && currentRole !== 'CEO';
   const canManageArCrud = showReceivables && (can(currentUser, 'receivables.allocate') || can(currentUser, 'revenue.create'));
   const canManageApCrud = showPayables && (can(currentUser, 'payables.submit') || can(currentUser, 'payables.approve'));
-  const fullReport = showOrders && showRevenue && showReceivables && showPayables;
+  const fullReport = canReadOrdersData && showRevenue && showReceivables && showPayables;
   const [selectedSection, setActiveSection] = useState('overview');
   const activeSection = canOpenSection(currentUser, selectedSection) ? selectedSection : homeSection(currentUser);
   const reviewingResubmissions = activeSection === 'assignment-reviews';
@@ -223,12 +224,12 @@ export default function App() {
   const [onlyMyRoleRedAlerts, setOnlyMyRoleRedAlerts] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
-  const debouncedSearchQuery = useDebouncedValue(searchQuery, 250);
-  const debouncedCategory = selectedCategory;
-  const debouncedOrigin = selectedOrigin;
-  const debouncedDebtFilter = debtFilter;
-  const debouncedPayableWorkflowFilter = payableWorkflowFilter;
-  const debouncedOrderFilter = orderFilter;
+  const debouncedSearchQuery = useDebouncedValue(searchQuery, 300);
+  const debouncedCategory = useDebouncedValue(selectedCategory, 150);
+  const debouncedOrigin = useDebouncedValue(selectedOrigin, 150);
+  const debouncedDebtFilter = useDebouncedValue(debtFilter, 150);
+  const debouncedPayableWorkflowFilter = useDebouncedValue(payableWorkflowFilter, 150);
+  const debouncedOrderFilter = useDebouncedValue(orderFilter, 150);
 
   // Dữ liệu nghiệp vụ được nạp khi mở phân hệ có quyền.
   const [vendorItems, setVendorItems] = useState([]);
@@ -243,7 +244,7 @@ export default function App() {
   const [ordersWarning, setOrdersWarning] = useState('');
   const [dataLoading, setDataLoading] = useState(false);
   const dataPanel = ['overview', 'orders', 'revenue', 'receivables', 'payables', 'data-entry', 'reminders'].includes(activeSection);
-  const loadOrders = showOrders && dataPanel;
+  const loadOrders = canReadOrdersData && dataPanel;
   const loadFinance = (showRevenue || showReceivables || showPayables) && dataPanel;
 
   // Mục 08 & QA12 Fix: Tách tải PO thành useEffect hoàn toàn độc lập với Finance;
@@ -398,7 +399,7 @@ export default function App() {
     else setWorkspacePanel(null);
   };
   const openWorkAlert = alert => {
-    const panel = alertDestination(alert, currentRole, showOrders);
+    const panel = alertDestination(alert, currentRole, canReadOrdersData);
     if (panel.type === 'ITEM_DETAIL') void openItem(panel.data);
     else openWorkspace(panel);
   };
@@ -561,7 +562,7 @@ export default function App() {
     showToast(`Đăng nhập thành công với vai trò: ${matched.title}`, 'info');
   };
 
-  const classifiedItems = useMemo(() => showOrders ? vendorItems.map(row => classifyProgress(row, reportDate)) : [], [showOrders, vendorItems, reportDate]);
+  const classifiedItems = useMemo(() => canReadOrdersData ? vendorItems.map(row => classifyProgress(row, reportDate)) : [], [canReadOrdersData, vendorItems, reportDate]);
   const classifiedAr = useMemo(() => showReceivables ? receivables.map(row => classifyDebt(row, reportDate)) : [], [showReceivables, receivables, reportDate]);
   const classifiedAp = useMemo(() => showPayables ? payables.map(row => classifyDebt(row, reportDate)) : [], [showPayables, payables, reportDate]);
 
@@ -1041,9 +1042,11 @@ export default function App() {
         </header>
         <main className="login-main">
           <section className="login-card" aria-labelledby="login-title">
-            <div className="login-emblem"><Lock size={24} strokeWidth={1.6} /></div>
-            <h1 id="login-title">{t("Đăng nhập")}</h1>
-            <p className="login-caption">{t("Hệ thống quản lý điều hành")}</p>
+            <div className="login-card-header">
+              <div className="login-emblem"><Lock size={24} strokeWidth={1.6} /></div>
+              <h1 id="login-title">{t("Đăng nhập")}</h1>
+              <p className="login-caption">{t("Hệ thống quản lý điều hành")}</p>
+            </div>
             {loginError && <div className="login-message login-error" role="alert">{t(loginError)}</div>}
             {policyError && <div className="login-message login-error" role="alert">
               {t(policyError)} <button type="button" onClick={() => setPolicyAttempt(attempt => attempt + 1)}>{t('Thử lại')}</button>
@@ -1077,8 +1080,8 @@ export default function App() {
                   onChange={e => setRememberMe(e.target.checked)} />{t("Ghi nhớ email")}</label>
                 <button type="button" onClick={() => setForgotPasswordSent(true)}>{t("Quên mật khẩu?")}</button>
               </div>
-              <div className="login-terms-box rounded-lg border border-slate-200 bg-slate-50/80 p-3 text-xs text-slate-700 space-y-1.5">
-                <label htmlFor="login-accept-terms" className="flex items-start gap-2 cursor-pointer font-medium text-slate-800">
+              <div className="login-terms-box">
+                <label htmlFor="login-accept-terms" className="login-terms-label">
                   <input
                     id="login-accept-terms"
                     name="acceptedTerms"
@@ -1091,21 +1094,22 @@ export default function App() {
                         setLoginError('');
                       }
                     }}
-                    className="mt-0.5 shrink-0"
+                    className="login-terms-checkbox"
                   />
-                  <span>
+                  <span className="login-terms-text">
                     {t("Tôi đã đọc và đồng ý với Chính sách bảo mật và Điều khoản sử dụng hệ thống")}
-                    <span className="text-rose-600 font-bold" aria-hidden="true"> *</span>
+                    <span className="required-mark" aria-hidden="true"> *</span>
                   </span>
                 </label>
-                <div className="pl-5">
+                <div className="login-terms-actions">
                   <button
                     type="button"
                     disabled={!policy}
                     onClick={() => termsPolicyDialog.current?.showModal()}
-                    className="text-sky-700 hover:text-sky-900 underline font-semibold cursor-pointer text-[11px]"
+                    className="login-terms-link"
                   >
-                    {t("Xem chi tiết Chính sách bảo mật & Điều khoản sử dụng")}
+                    <ShieldCheck size={14} aria-hidden="true" />
+                    <span>{t("Xem chi tiết Chính sách bảo mật & Điều khoản sử dụng")}</span>
                   </button>
                 </div>
               </div>
@@ -1451,7 +1455,7 @@ export default function App() {
                 <h2 className="text-xl font-bold text-slate-900 mt-1">{t("Doanh thu")}</h2>
               </div>
               <div className="flex items-center gap-2">
-                {showOrders && can(currentUser, 'revenue.create') && <button
+                {can(currentUser, 'revenue.create') && <button
                   onClick={() => openWorkspace({ type: 'RECORD_REV', data: null })}
                   className="px-3.5 py-2 rounded-lg bg-slate-900 text-white text-sm font-semibold hover:bg-slate-800 cursor-pointer"
                 >{t("+ Ghi nhận doanh thu")}</button>}
@@ -1631,7 +1635,7 @@ export default function App() {
             </div>
 
             <div className="workflow-filter-tabs" aria-label={t("Lọc quy trình chi")}>{[['all', 'Tất cả hồ sơ'], [AP_SPLIT_REQUIRED, AP_SPLIT_REQUIRED], [AP_PENDING, 'Chờ CEO duyệt'], [AP_APPROVED, 'Đã duyệt chi'], [AP_REVIEW, 'Cần lập đề nghị'], [AP_RETURNED, 'Cần bổ sung']].map(([value, label]) => <button key={value} aria-pressed={payableWorkflowFilter === value} onClick={() => { setPayableWorkflowFilter(value); if (debtFilter !== 'all') setDebtFilter('all'); }}>{t(label)}<span>{value === 'all' ? sortedPayables.length : sortedPayables.filter(row => payableWorkflowStatus(row) === value).length}</span></button>)}</div>
-            <DebtStatusOverview rows={payableScope} debtType="payables" role={currentRole} canSplit={showOrders}
+            <DebtStatusOverview rows={payableScope} debtType="payables" role={currentRole} canSplit={canReadOrdersData}
               filter={debouncedDebtFilter} onFilter={setDebtFilter} onOpen={openWorkspace}
               redOnly={onlyMyRoleRedAlerts} onClearRed={() => { setOnlyMyRoleRedAlerts(false); setDebtFilter('all'); }}
               tasks={allDirectoryTasks} accounts={accounts} reminders={allReminders} onRemindAlert={canRemindBoss ? remindWorkAlert : undefined} />
@@ -1654,7 +1658,7 @@ export default function App() {
                   {!apPagination.loading && !apPagination.error && !apPagination.totalItems && <tr><td colSpan={9} className="empty-table">{t("Không có khoản phải trả phù hợp. ")}<button onClick={resetFilters}>{t("Xóa bộ lọc")}</button></td></tr>}
                   {apPagination.visibleItems.map(ap => {
                     const isRed = ap.priorityRank === 0;
-                    const action = payableAction(ap, currentRole, showOrders);
+                    const action = payableAction(ap, currentRole, canReadOrdersData);
                     const status = payableWorkflowStatus(ap);
                     const alertObj = { id: `payables-${ap.id}`, type: 'payables', reference: ap.docNo, label: ap.supplierName, status: ap.alertLabel, data: ap };
                     return (
@@ -1781,12 +1785,12 @@ export default function App() {
                 {workspacePanel.type === 'CREATE_AR' && <ReceivableCrudForm mode="create" finance={finance} items={vendorItems} onAction={handleFinanceAction} onClose={requestCloseWorkspace} />}
                 {workspacePanel.type === 'EDIT_AR' && <ReceivableCrudForm mode="edit" row={workspaceDebt} finance={finance} items={vendorItems} onAction={handleFinanceAction} onClose={requestCloseWorkspace} />}
                 {workspacePanel.type === 'RECORD_REV' && <InvoiceForm finance={finance} items={vendorItems} onAction={handleFinanceAction} onClose={requestCloseWorkspace} />}
-                {workspacePanel.type === 'CREATE_AP' && <PayableCrudForm mode="create" items={vendorItems} onAction={handleFinanceAction} onClose={requestCloseWorkspace} />}
-                {workspacePanel.type === 'EDIT_AP' && <PayableCrudForm mode="edit" row={workspaceDebt} items={vendorItems} onAction={handleFinanceAction} onClose={requestCloseWorkspace} />}
+                {workspacePanel.type === 'CREATE_AP' && <PayableCrudForm mode="create" finance={finance} items={vendorItems} onAction={handleFinanceAction} onClose={requestCloseWorkspace} />}
+                {workspacePanel.type === 'EDIT_AP' && <PayableCrudForm mode="edit" row={workspaceDebt} finance={finance} items={vendorItems} onAction={handleFinanceAction} onClose={requestCloseWorkspace} />}
                 {workspacePanel.type === 'SPLIT_AP' && <SplitPayableForm row={workspaceDebt} items={vendorItems} onAction={handleFinanceAction} onClose={requestCloseWorkspace} />}
                 {['SUBMIT_AP', 'REVIEW_AP', 'PAY_AP'].includes(workspacePanel.type) && <PayableForm actorId={currentUser.id} actorRole={currentRole} type={workspacePanel.type} row={workspaceDebt} onAction={handleFinanceAction} onClose={requestCloseWorkspace} />}
               </fieldset>)}
-              {workspacePanel.type === 'DEBT_DETAIL' && <DebtDetailPanel row={classifyDebt(workspaceDebt ?? workspacePanel.data, reportDate)} debtType={workspacePanel.debtType} role={currentRole} canSplit={showOrders} history={visibleFinanceHistory} onOpen={openWorkspace} onClose={requestCloseWorkspace} onDelete={handleDeleteDebt} tasks={allDirectoryTasks} accounts={accounts} reminders={allReminders} onRemindAlert={canRemindBoss ? remindWorkAlert : undefined} />}
+              {workspacePanel.type === 'DEBT_DETAIL' && <DebtDetailPanel row={classifyDebt(workspaceDebt ?? workspacePanel.data, reportDate)} debtType={workspacePanel.debtType} role={currentRole} canSplit={canReadOrdersData} history={visibleFinanceHistory} onOpen={openWorkspace} onClose={requestCloseWorkspace} onDelete={handleDeleteDebt} tasks={allDirectoryTasks} accounts={accounts} reminders={allReminders} onRemindAlert={canRemindBoss ? remindWorkAlert : undefined} />}
             </div>
           </div>
           {showDiscardDialog && <div className="discard-overlay"><section role="alertdialog" aria-modal="true" aria-labelledby="discard-title" className="discard-dialog"><h3 id="discard-title">{t("Bạn chưa lưu thay đổi")}</h3><p>{t("Giữ cửa sổ này để tiếp tục chỉnh sửa hoặc bỏ phần chưa lưu.")}</p><div><button className="primary" onClick={() => { setShowDiscardDialog(false); document.querySelector('.workspace-dialog input:not([type=hidden]), .workspace-dialog textarea')?.focus(); }}>{t("Tiếp tục chỉnh sửa")}</button><button onClick={() => { setShowDiscardDialog(false); setWorkspaceDirty(false); setWorkspacePanel(null); }}>{t("Bỏ thay đổi")}</button></div></section></div>}

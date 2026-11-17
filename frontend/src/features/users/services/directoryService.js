@@ -22,16 +22,23 @@ function normalizeProfile(record, departmentNavigation) {
   const role = ROLE_PROFILES[record.role] || ROLE_PROFILES.Sale;
   const publicRecord = { ...record };
   delete publicRecord.password;
+  let baseNav = [
+    ...(record.navigation ??
+      departmentNavigation?.[record.role] ??
+      defaultNavigationForRole(record.role)),
+  ];
+  if (record.role === 'Sale' && !baseNav.includes('data-entry')) {
+    baseNav.push('data-entry');
+  }
+  if (record.role === 'Accountant') {
+    baseNav = baseNav.filter(sec => sec !== 'orders' && sec !== 'data-entry');
+  }
   return {
     ...publicRecord,
     permissions: publicRecord.permissions || role.permissions,
     roleLabel: publicRecord.roleLabel || role.label,
     title: publicRecord.title || role.title,
-    navigation: [
-      ...(record.navigation ??
-        departmentNavigation?.[record.role] ??
-        defaultNavigationForRole(record.role)),
-    ],
+    navigation: baseNav,
   };
 }
 

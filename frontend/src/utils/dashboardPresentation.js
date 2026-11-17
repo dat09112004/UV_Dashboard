@@ -65,3 +65,20 @@ export function presentAlert(alert, role) {
     facts: isAr ? `Đã thu ${formatMillions(data.allocatedPaid)}` : payableWorkflowStatus(data),
     action, button: grouped && role === 'Accountant' ? 'Tách chứng từ' : !isAr && isExec && data.approvalState === 'Chờ CEO duyệt chi' ? grouped ? 'Yêu cầu tách hồ sơ' : 'Xem đề nghị duyệt chi' : isAr ? 'Mở khoản phải thu' : 'Mở khoản phải trả' };
 }
+
+export function formatAlertReason(item) {
+  return item?.alertLabel || item?.alertReason || item?.alertLevel || 'Đúng hạn';
+}
+
+export function presentOrderStatus(item, state) {
+  if (item?.priorityRank === 0) {
+    return { label: item.alertLabel || state?.label || 'Báo động đỏ', tone: 'critical' };
+  }
+  if (state?.tone === 'critical') {
+    return { label: state.label, tone: 'critical' };
+  }
+  if (item?.priorityRank === 1 || state?.tone === 'warning') {
+    return { label: item.alertLabel || state?.label || 'Cần xử lý', tone: 'warning' };
+  }
+  return { label: state?.label || item?.alertLevel || 'Đúng hạn', tone: 'normal' };
+}

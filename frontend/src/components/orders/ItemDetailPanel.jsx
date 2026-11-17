@@ -43,70 +43,68 @@ export default function ItemDetailPanel({
   };
 
   const projection = computeProjectedProgress(
-    { ...item, unit: unitInput || item.unit },
+    item,
     { mode: progressMode, nhapInput, deliveredInput, orderedInput },
   );
 
-  const unitError = projection.orderedQty !== null && !unitInput.trim()
-    ? 'Cần bổ sung đơn vị tính khi nhập số lượng đặt.'
-    : unitInput.trim().length > 24 ? 'Đơn vị tính tối đa 24 ký tự.' : '';
-
+  const todayDate = parseBusinessDate(reportDate || businessToday());
   const releasedDate = parseBusinessDate(item.releasedPoDate);
-  const etdParsed = parseBusinessDate(shipDateEtd);
-  const etaParsed = parseBusinessDate(etaDate);
-  const receiptParsed = parseBusinessDate(expectedReceiptDate);
-  const shipParsed = parseBusinessDate(actualShipDate);
-  const deliveryParsed = parseBusinessDate(actualDeliveryDate);
-  const todayParsed = parseBusinessDate(businessToday());
+  const parsedReceipt = parseBusinessDate(expectedReceiptDate);
+  const parsedActualShip = parseBusinessDate(actualShipDate);
+  const parsedActualDelivery = parseBusinessDate(actualDeliveryDate);
+  const parsedEtd = parseBusinessDate(shipDateEtd);
+  const parsedEta = parseBusinessDate(etaDate);
 
-  const receiptDateError = receiptParsed && releasedDate && receiptParsed < releasedDate
-    ? 'Ngày về dự kiến không được trước ngày phát hành PO.'
-    : receiptParsed && etaParsed && receiptParsed > etaParsed
-      ? 'Ngày dự kiến về kho không được sau ETA giao khách.' : '';
-  const etdError = etdParsed && releasedDate && etdParsed < releasedDate
-    ? 'ETD không được trước ngày phát hành PO.' : '';
-  const etaError = etaParsed && etdParsed && etaParsed < etdParsed
-    ? 'ETA không được trước ETD.' : '';
-  const actualShipError = shipParsed && todayParsed && shipParsed > todayParsed
+  const unitError = projection.orderedQty !== null && !String(unitInput || '').trim()
+    ? 'Cần bổ sung đơn vị tính khi nhập số lượng đặt.'
+    : String(unitInput || '').trim().length > 24
+      ? 'Đơn vị tính tối đa 24 ký tự.' : '';
+
+  const receiptDateError = parsedReceipt && parsedEta && parsedReceipt > parsedEta
+    ? 'Ngày dự kiến về kho không được sau ETA giao khách.'
+    : parsedReceipt && releasedDate && parsedReceipt < releasedDate
+      ? 'Ngày về dự kiến không được trước ngày phát hành PO.' : '';
+
+  const actualShipError = parsedActualShip && todayDate && parsedActualShip > todayDate
     ? 'Ngày xuất thực tế không được sau ngày hiện tại.'
-    : shipParsed && releasedDate && shipParsed < releasedDate
+    : parsedActualShip && releasedDate && parsedActualShip < releasedDate
       ? 'Ngày xuất thực tế không được trước ngày phát hành PO.' : '';
+
   const actualDeliveryError = (projection.projectedDelivered ?? 0) > 0 && !actualDeliveryDate
-    ? 'Cần ngày giao xác nhận khi có số lượng đã giao.'
-    : deliveryParsed && !(projection.projectedDelivered > 0)
+    ? 'Cần số lượng đặt và ngày giao xác nhận khi có số lượng đã giao.'
+    : parsedActualDelivery && !(projection.projectedDelivered > 0)
       ? 'Cần có số lượng giao khách lớn hơn 0 khi ghi ngày giao xác nhận.'
-      : deliveryParsed && shipParsed && deliveryParsed < shipParsed
+      : parsedActualDelivery && parsedActualShip && parsedActualDelivery < parsedActualShip
         ? 'Ngày giao xác nhận không được trước ngày xuất thực tế.'
-        : deliveryParsed && todayParsed && deliveryParsed > todayParsed
-          ? 'Ngày giao xác nhận không được sau ngày theo dõi.' : '';
+        : parsedActualDelivery && todayDate && parsedActualDelivery > todayDate
+          ? 'Ngày giao xác nhận không được sau ngày theo dõi.'
+          : parsedActualDelivery && releasedDate && parsedActualDelivery < releasedDate
+            ? 'Ngày giao xác nhận không được trước ngày phát hành PO.' : '';
 
-  const numOnProcess = onProcessPct.trim() === '' ? null : Number(onProcessPct.replace(',', '.'));
-  const numPackaging = packagingPct.trim() === '' ? null : Number(packagingPct.replace(',', '.'));
-  const onProcessError = numOnProcess !== null && (!Number.isFinite(numOnProcess) || numOnProcess < 0 || numOnProcess > 100)
-    ? 'Tỷ lệ sản xuất phải từ 0 đến 100%.' : '';
-  const packagingError = numPackaging !== null && (!Number.isFinite(numPackaging) || numPackaging < 0 || numPackaging > 100)
-    ? 'Tỷ lệ đóng gói phải từ 0 đến 100%.'
+  const etdError = parsedEtd && releasedDate && parsedEtd < releasedDate
+    ? 'ETD không trước PO; ETA không trước ETD.' : '';
+  const etaError = parsedEtd && parsedEta && parsedEta < parsedEtd
+    ? 'ETD không trước PO; ETA không trước ETD.' : '';
+
+  const numOnProcess = onProcessPct === '' ? null : Number(onProcessPct);
+  const numPackaging = packagingPct === '' ? null : Number(packagingPct);
+  const onProcessError = !item.inboundOnly && (numOnProcess === null || !Number.isFinite(numOnProcess) || numOnProcess < 0 || numOnProcess > 100)
+    ? 'Tỷ lệ sản xuất từ 0 đến 100%.' : '';
+  const packagingError = !item.inboundOnly && (numPackaging === null || !Number.isFinite(numPackaging) || numPackaging < 0 || numPackaging > 100)
+    ? 'Tỷ lệ đóng gói từ 0 đến 100%.'
     : numPackaging !== null && (numOnProcess === null || numPackaging > numOnProcess)
-      ? 'Tỷ lệ đóng gói không được vượt tỷ lệ sản xuất.' : '';
-  const reasonError = reasonTouched && !changeReason.trim() ? 'Cần nhập lý do cập nhật.' : '';
+      ? 'Tỷ lệ đóng gói không vượt tỷ lệ sản xuất; tỷ lệ từ 0 đến 100.' : '';
 
-  const hasFieldErrors = Boolean(
-    projection.orderedInspect.error || unitError || projection.nhapInspect.error || projection.deliveredInspect.error ||
-    receiptDateError || etdError || etaError || actualShipError || actualDeliveryError || onProcessError || packagingError
-  );
+  const reasonError = reasonTouched && !String(changeReason || '').trim()
+    ? 'Cần lý do cập nhật, tối đa 500 ký tự.' : '';
 
   const handleSubmit = event => {
     setReasonTouched(true);
-    if (!changeReason.trim() || hasFieldErrors) {
-      event.preventDefault();
-      return;
-    }
     onSubmit(event);
   };
 
   const alertObj = { id: `order-${item.rowId}`, type: 'orders', reference: item.poId, label: item.vendorItemNo, status: item.alertLabel, data: item };
-
-  return <div className="item-detail-content" key={item.trackingHistory?.at(-1)?.id || item.rowId}>
+  return <div className="item-detail-panel">
     <section className={`item-detail-notice ${item.priorityRank === 0 ? 'critical' : item.priorityRank === 1 ? 'warning' : 'normal'}`}>
       <div><strong>{t(item.alertLevel)}</strong>{item.lastUpdateDate && <span>{t("Cập nhật: ")}{item.lastUpdateDate} {t(item.lastUpdateTime)}</span>}</div>
       <p>{t(item.alertLabel)}</p>
@@ -134,7 +132,7 @@ export default function ItemDetailPanel({
       <div className="item-form-heading">
         <div>
           <h4>{t('Cập nhật số lượng lũy kế & lịch giao')}</h4>
-          <span>{t(item.vendorName)} · {item.countryOfOrigin} · {t('Các trường có dấu * là bắt buộc')}</span>
+          <span>{t(item.vendorName)} · {item.countryOfOrigin}</span>
         </div>
         <div className="segmented-control progress-mode-switch" role="group" aria-label={t('Cách nhập số lượng tiến độ')}>
           <button type="button" aria-pressed={progressMode === 'today'} onClick={() => switchMode('today')}>{t('Nhập thêm hôm nay')}</button>
@@ -148,13 +146,12 @@ export default function ItemDetailPanel({
         <h5 className="form-section-title">{t("Số lượng hàng")}</h5>
         <div className="item-form-grid">
           <label>{t("Số lượng đặt")}
-            <input type="text" inputMode="decimal" value={orderedInput} onChange={e => setOrderedInput(e.target.value)} placeholder={t("Ví dụ: 10.000")} />
+            <input type="text" inputMode="decimal" value={orderedInput} onChange={e => setOrderedInput(e.target.value)} placeholder={t("Ví dụ: 1.000")} />
             {projection.orderedInspect.error && <small className="field-hint is-error" role="alert">{t(projection.orderedInspect.error)}</small>}
             {!projection.orderedInspect.error && projection.orderedInspect.warning && <small className="field-hint is-warning">{t(projection.orderedInspect.warning)}</small>}
-            {!projection.orderedInspect.error && projection.orderedInspect.value !== null && <small className="field-hint">{phrase('Hệ thống hiểu: §', projection.orderedInspect.formatted)}</small>}
           </label>
           <label>{t("Đơn vị tính")}{projection.orderedQty !== null && <> <span className="required-mark" aria-hidden="true">*</span></>}
-            <input name="unit" value={unitInput} onChange={e => setUnitInput(e.target.value)} maxLength={24} placeholder="PCS, m, kg…" />
+            <input name="unit" value={unitInput} onChange={e => setUnitInput(e.target.value)} maxLength={24} placeholder="pcs, m, kg…" />
             {unitError && <small className="field-hint is-error" role="alert">{t(unitError)}</small>}
           </label>
           <label>
@@ -166,17 +163,15 @@ export default function ItemDetailPanel({
               required={!item.inboundOnly && progressMode === 'cumulative'}
               value={nhapInput}
               onChange={e => setNhapInput(e.target.value)}
-              placeholder={t(progressMode === 'today' ? 'Nhập số nhận thêm hôm nay (ví dụ: 500)' : 'Chưa xác nhận')}
+              placeholder="0"
             />
             {projection.nhapInspect.error && <small className="field-hint is-error" role="alert">{t(projection.nhapInspect.error)}</small>}
             {!projection.nhapInspect.error && projection.nhapInspect.warning && <small className="field-hint is-warning">{t(projection.nhapInspect.warning)}</small>}
-            {!projection.nhapInspect.error && <small className="field-hint">
-              {progressMode === 'today'
-                ? phrase('Hiện tại: § · Tổng dự kiến sau lưu: §', formatQuantity(item.nhap ?? 0), formatQuantity(projection.projectedReceived ?? 0))
-                : projection.projectedReceived !== null
-                  ? phrase('Hệ thống hiểu / Tổng sau lưu: §', `${formatQuantity(projection.projectedReceived)} ${unitInput || item.unit || ''}`.trim())
-                  : t('Có thể nhập số nguyên hoặc dấu chấm tách hàng nghìn (ví dụ 1.000).')}
-            </small>}
+            {!projection.nhapInspect.error && progressMode === 'today' && (
+              <small className="field-hint">
+                {phrase('Tổng sau lưu: §', formatQuantity(projection.projectedReceived ?? 0))}
+              </small>
+            )}
           </label>
           <label>
             {t(progressMode === 'today' ? 'Giao thêm cho khách hôm nay' : 'Đã giao khách (lũy kế)')}
@@ -185,23 +180,16 @@ export default function ItemDetailPanel({
               inputMode="decimal"
               value={deliveredInput}
               onChange={e => setDeliveredInput(e.target.value)}
-              placeholder={t(progressMode === 'today' ? 'Nhập số giao thêm hôm nay (ví dụ: 500)' : 'Chưa xác nhận')}
+              placeholder="0"
             />
             {projection.deliveredInspect.error && <small className="field-hint is-error" role="alert">{t(projection.deliveredInspect.error)}</small>}
             {!projection.deliveredInspect.error && projection.deliveredInspect.warning && <small className="field-hint is-warning">{t(projection.deliveredInspect.warning)}</small>}
-            {!projection.deliveredInspect.error && <small className="field-hint">
-              {progressMode === 'today'
-                ? phrase('Hiện tại: § · Tổng dự kiến sau lưu: §', formatQuantity(item.deliveredQty ?? 0), formatQuantity(projection.projectedDelivered ?? 0))
-                : projection.projectedDelivered !== null
-                  ? phrase('Hệ thống hiểu / Tổng sau lưu: §', `${formatQuantity(projection.projectedDelivered)} ${unitInput || item.unit || ''}`.trim())
-                  : t('Để trống nếu chưa xác nhận giao khách.')}
-            </small>}
+            {!projection.deliveredInspect.error && progressMode === 'today' && (
+              <small className="field-hint">
+                {phrase('Tổng sau lưu: §', formatQuantity(projection.projectedDelivered ?? 0))}
+              </small>
+            )}
           </label>
-        </div>
-        <div className="projected-total-banner" role="status">
-          <strong>{t('Tổng dự kiến sau lưu:')}</strong>
-          <span>{t('Đã về kho:')} <b>{formatQuantity(projection.projectedReceived)} / {formatQuantity(projection.orderedQty)} {unitInput || item.unit}</b></span>
-          <span>{t('Đã giao khách:')} <b>{formatQuantity(projection.projectedDelivered)} / {formatQuantity(projection.orderedQty)} {unitInput || item.unit}</b></span>
         </div>
         <details className="production-edit" open><summary>{t("Lịch xuất và giao hàng")}</summary><div className="item-form-grid">
           <label>{t("Dự kiến về kho")}
@@ -238,7 +226,7 @@ export default function ItemDetailPanel({
           <label>{t("Cảnh báo thủ công")}<select name="manualPriorityRank" defaultValue={item.manualPriorityRank ?? item.priorityRank}>{['Báo động đỏ', 'Cần xử lý', 'Đúng hạn'].map((label, rank) => <option key={rank} value={rank} disabled={!canLowerAlerts && rank > (item.manualPriorityRank ?? item.priorityRank)}>{t(label)}</option>)}</select></label>
         </div></details>
         <label className="update-reason">{t("Lý do cập nhật")} <span className="required-mark" aria-hidden="true">*</span>
-          <input name="changeReason" required maxLength={500} value={changeReason} onChange={e => { setChangeReason(e.target.value); setReasonTouched(true); }} onBlur={() => setReasonTouched(true)} placeholder={t("Ví dụ: Đã nhận thêm 500 hàng theo phiếu nhập…")} />
+          <input name="changeReason" required maxLength={500} value={changeReason} onChange={e => { setChangeReason(e.target.value); setReasonTouched(true); }} onBlur={() => setReasonTouched(true)} placeholder={t("Nhập lý do cập nhật tiến độ…")} />
           {reasonError && <small className="field-hint is-error" role="alert">{t(reasonError)}</small>}
         </label>
       </fieldset>

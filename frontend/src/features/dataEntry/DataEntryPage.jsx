@@ -17,6 +17,7 @@ const hasValues = row => Object.values(row.values).some(value => String(value ??
 const REQUIRED_BY_SHEET = {
   orders: ['poId', 'vendorItemNo', 'vendorNo', 'vendorName', 'category', 'releasedPoDate', 'unit', 'orderedQty'],
   revenue: ['docNo', 'customerName', 'recordDate', 'dueDate', 'shippedQty', 'netRevenue', 'basis'],
+  receivables: ['docNo', 'customerName', 'originalAmount'],
   payables: ['docNo', 'originalAmount'],
   receipts: ['reference', 'date', 'amount'],
   allocations: ['entryReference', 'receiptReference', 'docNo', 'date', 'amount'],
@@ -26,12 +27,9 @@ const REQUIRED_BY_SHEET = {
 
 function CellFeedback({ columnKey, value, rowValues }) {
   const feedback = inspectEntryCell(columnKey, value, rowValues);
-  if (!feedback.error && !feedback.warning && !feedback.formatted) return null;
+  if (!feedback.error && !feedback.warning) return null;
   if (feedback.error) return <small className="field-hint is-error" role="alert">{t(feedback.error)}</small>;
   if (feedback.warning) return <small className="field-hint is-warning">{t(feedback.warning)}</small>;
-  if (['orderedQty', 'nhap', 'deliveredQty', 'shippedQty', 'unitPriceVnd', 'netRevenue', 'originalAmount', 'amount'].includes(columnKey)) {
-    return <small className="field-hint">{phrase('Hệ thống hiểu: §', feedback.formatted)}</small>;
-  }
   return null;
 }
 
@@ -89,13 +87,12 @@ function QuickCreateOrderForm({ existingItems, pending, onSaveDirect, onStageDra
     <div className="entry-quick-header">
       <div>
         <h3>{t('Thêm đơn hàng mới (PO)')}</h3>
-        <p className="management-note">{t('Chỉ hiển thị các trường tạo PO cần thiết. Trường có dấu * là bắt buộc.')}</p>
       </div>
-      <button type="button" className="row-detail-button" onClick={onClose}>{t('Đóng biểu mẫu')}</button>
+      <button type="button" className="row-detail-button" onClick={onClose}>{t('Đóng')}</button>
     </div>
     <fieldset disabled={pending} className="item-form-grid">
       <label>{t('Mã PO')} <span className="required-mark" aria-hidden="true">*</span>
-        <input value={values.poId} onChange={e => update('poId', e.target.value)} onBlur={() => setTouched(p => ({ ...p, poId: true }))} placeholder="UV-Intl-3500010" />
+        <input value={values.poId} onChange={e => update('poId', e.target.value)} onBlur={() => setTouched(p => ({ ...p, poId: true }))} placeholder="UV-55151" />
         {showErr('poId') && <small className="field-hint is-error" role="alert">{t(errors.poId)}</small>}
       </label>
       <label>{t('Mã hàng')} <span className="required-mark" aria-hidden="true">*</span>
@@ -103,7 +100,7 @@ function QuickCreateOrderForm({ existingItems, pending, onSaveDirect, onStageDra
         {showErr('vendorItemNo') && <small className="field-hint is-error" role="alert">{t(errors.vendorItemNo)}</small>}
       </label>
       <label>{t('Mã nhà cung cấp')} <span className="required-mark" aria-hidden="true">*</span>
-        <input value={values.vendorNo} onChange={e => update('vendorNo', e.target.value)} onBlur={() => setTouched(p => ({ ...p, vendorNo: true }))} placeholder="15090" />
+        <input value={values.vendorNo} onChange={e => update('vendorNo', e.target.value)} onBlur={() => setTouched(p => ({ ...p, vendorNo: true }))} placeholder="15000" />
         {showErr('vendorNo') && <small className="field-hint is-error" role="alert">{t(errors.vendorNo)}</small>}
       </label>
       <label>{t('Nhà cung cấp')} <span className="required-mark" aria-hidden="true">*</span>
@@ -120,19 +117,17 @@ function QuickCreateOrderForm({ existingItems, pending, onSaveDirect, onStageDra
         {showErr('releasedPoDate') && <small className="field-hint is-error" role="alert">{t(errors.releasedPoDate)}</small>}
       </label>
       <label>{t('SL đặt')} <span className="required-mark" aria-hidden="true">*</span>
-        <input type="text" inputMode="decimal" value={values.orderedQty} onChange={e => update('orderedQty', e.target.value)} onBlur={() => setTouched(p => ({ ...p, orderedQty: true }))} placeholder={t('Ví dụ: 1.000')} />
+        <input type="text" inputMode="decimal" value={values.orderedQty} onChange={e => update('orderedQty', e.target.value)} onBlur={() => setTouched(p => ({ ...p, orderedQty: true }))} placeholder="1.000" />
         {showErr('orderedQty') && <small className="field-hint is-error" role="alert">{t(errors.orderedQty)}</small>}
         {!errors.orderedQty && qtyFeedback.warning && <small className="field-hint is-warning">{t(qtyFeedback.warning)}</small>}
-        {!errors.orderedQty && qtyFeedback.formatted && <small className="field-hint">{phrase('Hệ thống hiểu: §', qtyFeedback.formatted)}</small>}
       </label>
       <label>{t('Đơn vị')} <span className="required-mark" aria-hidden="true">*</span>
         <input value={values.unit} maxLength={24} onChange={e => update('unit', e.target.value)} onBlur={() => setTouched(p => ({ ...p, unit: true }))} placeholder="pcs, kg, m…" />
         {showErr('unit') && <small className="field-hint is-error" role="alert">{t(errors.unit)}</small>}
       </label>
       <label>{t('Đơn giá VND')}
-        <input type="text" inputMode="numeric" value={values.unitPriceVnd} onChange={e => update('unitPriceVnd', e.target.value)} onBlur={() => setTouched(p => ({ ...p, unitPriceVnd: true }))} placeholder={t('Ví dụ: 1.600')} />
+        <input type="text" inputMode="numeric" value={values.unitPriceVnd} onChange={e => update('unitPriceVnd', e.target.value)} onBlur={() => setTouched(p => ({ ...p, unitPriceVnd: true }))} placeholder="140.000" />
         {showErr('unitPriceVnd') && <small className="field-hint is-error" role="alert">{t(errors.unitPriceVnd)}</small>}
-        {!errors.unitPriceVnd && priceFeedback.formatted && <small className="field-hint">{phrase('Hệ thống hiểu: §', priceFeedback.formatted)}</small>}
       </label>
       <label>{t('Xuất xứ')}
         <input value={values.countryOfOrigin} onChange={e => update('countryOfOrigin', e.target.value)} placeholder="VIETNAM" />
@@ -145,10 +140,8 @@ function QuickCreateOrderForm({ existingItems, pending, onSaveDirect, onStageDra
         <input type="date" value={values.etaDate} onChange={e => update('etaDate', e.target.value)} />
       </label>
     </fieldset>
-    {(qtyFeedback.value !== null || projectedTotalVnd !== null) && <div className="projected-total-banner" role="status">
-      <strong>{t('Kiểm tra trước khi lưu:')}</strong>
-      {qtyFeedback.value !== null && <span>{t('SL đặt hệ thống hiểu:')} <b>{formatQuantity(qtyFeedback.value)} {values.unit}</b></span>}
-      {projectedTotalVnd !== null && <span>{t('Giá trị PO dự kiến:')} <b>{new Intl.NumberFormat(locale()).format(projectedTotalVnd)} VND</b></span>}
+    {projectedTotalVnd !== null && <div className="projected-total-banner" role="status">
+      <span>{t('Giá trị PO:')} <b>{new Intl.NumberFormat(locale()).format(projectedTotalVnd)} VND</b></span>
     </div>}
     <div className="workflow-footer">
       <button type="button" onClick={onClose} disabled={pending}>{t('Hủy')}</button>
@@ -234,13 +227,12 @@ function QuickUpdateProgressForm({ existingItems, initialOrder, pending, onSaveD
     <div className="entry-quick-header">
       <div>
         <h3>{t('Cập nhật tiến độ theo đơn hàng')}</h3>
-        <p className="management-note">{t('Chọn đơn hàng và cách nhập số lượng. Trường có dấu * là bắt buộc.')}</p>
       </div>
       <div className="segmented-control progress-mode-switch" role="group" aria-label={t('Cách nhập số lượng tiến độ')}>
         <button type="button" aria-pressed={progressMode === 'today'} onClick={() => switchMode('today')}>{t('Nhập thêm hôm nay')}</button>
         <button type="button" aria-pressed={progressMode === 'cumulative'} onClick={() => switchMode('cumulative')}>{t('Cập nhật tổng lũy kế')}</button>
       </div>
-      <button type="button" className="row-detail-button" onClick={onClose}>{t('Đóng biểu mẫu')}</button>
+      <button type="button" className="row-detail-button" onClick={onClose}>{t('Đóng')}</button>
     </div>
     <fieldset disabled={pending} className="item-form-grid">
       <label className="workflow-wide">{t('Dòng PO cần cập nhật')} <span className="required-mark" aria-hidden="true">*</span>
@@ -258,13 +250,10 @@ function QuickUpdateProgressForm({ existingItems, initialOrder, pending, onSaveD
           inputMode="decimal"
           value={nhapInput}
           onChange={e => { setNhapInput(e.target.value); setTouched(p => ({ ...p, nhap: true })); }}
-          placeholder={t(progressMode === 'today' ? 'Ví dụ: 1.000' : 'Nhập tổng lũy kế')}
+          placeholder="0"
         />
         {projection.nhapInspect.error && <small className="field-hint is-error" role="alert">{t(projection.nhapInspect.error)}</small>}
         {!projection.nhapInspect.error && projection.nhapInspect.warning && <small className="field-hint is-warning">{t(projection.nhapInspect.warning)}</small>}
-        {!projection.nhapInspect.error && <small className="field-hint">
-          {phrase('Hiện tại: § · Tổng dự kiến sau lưu: §', formatQuantity(target?.nhap ?? 0), formatQuantity(projection.projectedReceived ?? 0))}
-        </small>}
       </label>
       <label>
         {t(progressMode === 'today' ? 'Giao thêm cho khách hôm nay' : 'SL đã giao khách (lũy kế)')}
@@ -273,13 +262,10 @@ function QuickUpdateProgressForm({ existingItems, initialOrder, pending, onSaveD
           inputMode="decimal"
           value={deliveredInput}
           onChange={e => { setDeliveredInput(e.target.value); setTouched(p => ({ ...p, delivered: true })); }}
-          placeholder={t(progressMode === 'today' ? 'Ví dụ: 500' : 'Nhập tổng đã giao')}
+          placeholder="0"
         />
         {projection.deliveredInspect.error && <small className="field-hint is-error" role="alert">{t(projection.deliveredInspect.error)}</small>}
         {!projection.deliveredInspect.error && projection.deliveredInspect.warning && <small className="field-hint is-warning">{t(projection.deliveredInspect.warning)}</small>}
-        {!projection.deliveredInspect.error && <small className="field-hint">
-          {phrase('Hiện tại: § · Tổng dự kiến sau lưu: §', formatQuantity(target?.deliveredQty ?? 0), formatQuantity(projection.projectedDelivered ?? 0))}
-        </small>}
       </label>
       <label>{t('Dự kiến về kho')}
         <input type="date" value={expectedReceiptDate} onChange={e => setExpectedReceiptDate(e.target.value)} />
@@ -301,16 +287,10 @@ function QuickUpdateProgressForm({ existingItems, initialOrder, pending, onSaveD
         <input type="number" min="0" max="100" step="0.1" value={packagingPct} onChange={e => setPackagingPct(e.target.value)} />
       </label>
       <label className="workflow-wide">{t('Lý do cập nhật')} <span className="required-mark" aria-hidden="true">*</span>
-        <input value={changeReason} maxLength={500} onChange={e => { setChangeReason(e.target.value); setTouched(p => ({ ...p, changeReason: true })); }} placeholder={t('Ví dụ: Nhập kho đợt 2 theo phiếu NK-02…')} />
+        <input value={changeReason} maxLength={500} onChange={e => { setChangeReason(e.target.value); setTouched(p => ({ ...p, changeReason: true })); }} placeholder={t('Nhập lý do cập nhật tiến độ…')} />
         {touched.changeReason && reasonError && <small className="field-hint is-error" role="alert">{t(reasonError)}</small>}
       </label>
     </fieldset>
-    <div className="projected-total-banner" role="status">
-      <strong>{t('Tổng dự kiến sau lưu:')}</strong>
-      <span>{t('SL đặt:')} <b>{formatQuantity(target?.orderedQty)} {target?.unit}</b></span>
-      <span>{t('Đã về kho:')} <b>{formatQuantity(projection.projectedReceived)} {target?.unit}</b></span>
-      <span>{t('Đã giao khách:')} <b>{formatQuantity(projection.projectedDelivered)} {target?.unit}</b></span>
-    </div>
     <div className="workflow-footer">
       <button type="button" onClick={onClose} disabled={pending}>{t('Hủy')}</button>
       <button type="button" className="row-detail-button" disabled={pending} onClick={e => submitForm(e, 'draft')}>{t('Đưa vào bản nháp')}</button>
@@ -369,7 +349,7 @@ export default function DataEntryPage({ actor, data, onSave }) {
   });
   const pagedExisting = pagination.visibleItems;
 
-  if (!sheet) return <section className="analytics-card management-panel"><h2>{t('Nhập liệu Excel')}</h2><p>{t('Bạn chưa được cấp quyền xem bảng dữ liệu nào.')}</p></section>;
+  if (!sheet) return <section className="analytics-card management-panel"><h2>{t('Đơn hàng')}</h2><p>{t('Bạn chưa được cấp quyền xem bảng dữ liệu nào.')}</p></section>;
 
   const setRows = rows => {
     const next = { ...draft, sheets: { ...draft.sheets } };
@@ -480,8 +460,7 @@ export default function DataEntryPage({ actor, data, onSave }) {
   };
 
   return <section className="analytics-card management-panel entry-workspace" aria-busy={pending}>
-    <div className="entry-heading"><div><h1>{t('Nhập liệu Excel')}</h1>
-      <p>{t('Chọn bảng, dùng biểu mẫu gọn theo từng việc hoặc tải Excel vào bản nháp để kiểm tra trước khi lưu.')}</p></div></div>
+    <div className="entry-heading"><div><h1>{t('Đơn hàng')}</h1></div></div>
     <nav className="workflow-filter-tabs entry-tabs" aria-label={t('Bảng dữ liệu')}>
       {sheets.map(item => <button type="button" key={item.id} aria-pressed={item.id === sheet.id} disabled={pending}
         onClick={() => {
@@ -515,7 +494,6 @@ export default function DataEntryPage({ actor, data, onSave }) {
         <button className="row-detail-button" type="button" disabled={pending} onClick={() => run(() => downloadEntryWorkbook(sheet, columns, canEdit ? rows.filter(hasValues).map(row => row.values) : existing))}><Download size={15} />{t('Xuất Excel')}</button>
       </div>
     </div>
-    {!writable && <p className="management-note">{t(sheet.id === 'receivables' ? 'Công nợ phải thu được tạo từ doanh thu và cập nhật qua phân bổ thu.' : 'Bảng này chỉ dùng để xem và xuất dữ liệu.')}</p>}
     {writable && sheet.id === 'orders' && quickMode === 'create-order' && (
       <QuickCreateOrderForm
         existingItems={data.items}
@@ -545,7 +523,6 @@ export default function DataEntryPage({ actor, data, onSave }) {
       <button className="row-primary-button" type="button" disabled={pending} onClick={loadPreview}>{t('Đưa vào bản nháp')}</button>
       <button className="row-detail-button" type="button" disabled={pending} onClick={() => setImportFile(null)}>{t('Hủy')}</button>
     </div>}
-    {temporary && <p role="status" className="management-note">{t('Trình duyệt chỉ giữ bản nháp đến khi tải lại hoặc đóng thẻ. Hãy lưu dữ liệu trước khi rời đi.')}</p>}
     {message && <p role="status" className="management-note">{message}</p>}
     {warnings.length > 0 && <div role="status" className="entry-warnings">
       <strong>{t('Lưu ý định dạng số đã được hệ thống quy đổi:')}</strong>

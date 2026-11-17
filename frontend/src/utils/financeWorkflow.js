@@ -103,7 +103,11 @@ export function recordInvoice(state, user, payload, items, today = businessToday
   const row = items.find(item => item.rowId === Number(payload.rowId));
   if (!row) throw new Error('Chọn đúng dòng PO và mã hàng hiện có.');
   const docNo = text(payload.docNo, 'Số chứng từ').toUpperCase();
-  if ([...state.revenue, ...state.receivables].some(doc => doc.docNo.toUpperCase() === docNo)) throw new Error('Số chứng từ đã tồn tại.');
+  if ((state.revenue || []).some(doc => doc.docNo.toUpperCase() === docNo)) throw new Error('Số chứng từ đã tồn tại.');
+  const existingArByDoc = (state.receivables || []).find(doc => doc.docNo.toUpperCase() === docNo);
+  const existingArById = payload.linkedArId ? (state.receivables || []).find(doc => doc.id === payload.linkedArId) : null;
+  const targetUnlinkedAr = existingArById || (existingArByDoc && ((existingArByDoc.poLineId && Number(existingArByDoc.poLineId) === Number(row.rowId)) || existingArByDoc.poId === row.poId) && !(state.revenue || []).some(inv => inv.docNo.toUpperCase() === existingArByDoc.docNo.toUpperCase()) ? existingArByDoc : null);
+  if (existingArByDoc && !targetUnlinkedAr) throw new Error('Số chứng từ đã tồn tại.');
   const customerName = text(payload.customerName, 'Khách hàng');
   const recordDate = date(payload.recordDate, 'Ngày ghi nhận', today, state.openingDate);
   const dueDate = formatBusinessDate(payload.dueDate);
@@ -114,9 +118,22 @@ export function recordInvoice(state, user, payload, items, today = businessToday
   const basis = text(payload.basis, 'Căn cứ ghi nhận');
   const next = clone(state);
   const common = { docNo, customerName, poId: row.poId, poLineId: row.rowId, sku: row.vendorItemNo, category: row.category, currency: 'VND' };
-  next.revenue.push({ ...common, id: id('REV'), vendorName: `${row.vendorNo} - ${row.vendorName}`, recordDate, dueDate, shippedQty, netRevenue, cashCollected: 0,
+  const linkedAr = targetUnlinkedAr ? next.receivables.find(r => r.id === targetUnlinkedAr.id) : null;
+  const initialCashCollected = linkedAr ? Math.min(netRevenue, Number(linkedAr.allocatedPaid || 0)) : 0;
+  next.revenue.push({ ...common, id: id('REV'), vendorName: `${row.vendorNo} - ${row.vendorName}`, recordDate, dueDate, shippedQty, netRevenue, cashCollected: initialCashCollected,
     approvalStatus: 'Đã ghi nhận', basis, alertLevel: 'Đúng hạn', priorityRank: 2, statusNote: basis });
-  next.receivables.push({ ...common, id: id('AR'), vendorRef: `${row.vendorNo} - ${row.vendorName}`, dueDate, originalAmount: netRevenue, adjustment: 0, allocatedPaid: 0, remaining: netRevenue, commitmentNote: '' });
+  if (linkedAr) {
+    Object.assign(linkedAr, {
+      ...common,
+      vendorRef: `${row.vendorNo} - ${row.vendorName}`,
+      dueDate,
+      originalAmount: netRevenue,
+      remaining: Math.max(0, netRevenue + Number(linkedAr.adjustment || 0) - Number(linkedAr.allocatedPaid || 0)),
+      commitmentNote: linkedAr.commitmentNote || basis,
+    });
+  } else {
+    next.receivables.push({ ...common, id: id('AR'), vendorRef: `${row.vendorNo} - ${row.vendorName}`, dueDate, originalAmount: netRevenue, adjustment: 0, allocatedPaid: 0, remaining: netRevenue, commitmentNote: '' });
+  }
   return event(next, user, 'INVOICE_RECORDED', docNo, basis, netRevenue);
 }
 
@@ -133,7 +150,8 @@ export function createReceivable(state, user, payload, items = []) {
   const poId = matchedOrder?.poId || text(payload.poId || 'PO-CONG-NO', 'Mã PO tham chiếu', 64);
   const poLineId = matchedOrder ? matchedOrder.rowId : null;
   const sku = matchedOrder?.vendorItemNo || String(payload.sku || 'Tổng hợp theo PO').trim().slice(0, 120);
-  const category = matchedOrder?.category || String(payload.category || 'Nội thất gỗ').trim().slice(0, 120);
+  const fallbackCategory = items.find(item => item?.category)?.category || 'Chưa phân loại';
+  const category = String(matchedOrder?.category || payload.category || fallbackCategory).trim().slice(0, 120);
   const defaultVendorRef = matchedOrder ? `${matchedOrder.vendorNo} - ${matchedOrder.vendorName}` : 'Đối tác Uyên Vũ';
   const vendorRef = String(payload.vendorRef || defaultVendorRef).trim().slice(0, 255);
   const originalAmount = money(payload.originalAmount, 'Số tiền phải thu gốc');
@@ -166,6 +184,35 @@ export function createReceivable(state, user, payload, items = []) {
     remaining,
     commitmentNote,
   });
+  const wantSyncRev = payload.syncRevenue === true || payload.syncRevenue === 'true' || payload.syncRevenue === 'on';
+  if (wantSyncRev && !(next.revenue || []).some(r => r.docNo.toUpperCase() === docNo)) {
+    const revDate = payload.recordDate && parseBusinessDate(payload.recordDate) ? formatBusinessDate(payload.recordDate) : formatBusinessDate(businessToday());
+    const revQty = Number.isFinite(Number(payload.shippedQty)) && Number(payload.shippedQty) >= 0
+      ? Number(payload.shippedQty)
+      : Number(matchedOrder?.deliveredQty ?? matchedOrder?.nhap ?? matchedOrder?.orderedQty ?? 0);
+    const revBasis = commitmentNote || `Đồng bộ doanh thu & phải thu PO ${poId} - ${sku}`;
+    next.revenue.push({
+      id: id('REV'),
+      docNo,
+      customerName,
+      poId,
+      poLineId,
+      sku,
+      category,
+      currency: 'VND',
+      vendorName: vendorRef,
+      recordDate: revDate,
+      dueDate: dueDate === '—' ? revDate : dueDate,
+      shippedQty: revQty,
+      netRevenue: remaining,
+      cashCollected: 0,
+      approvalStatus: 'Đã ghi nhận',
+      basis: revBasis,
+      alertLevel: 'Đúng hạn',
+      priorityRank: 2,
+      statusNote: revBasis,
+    });
+  }
   return event(next, user, 'RECEIVABLE_CREATED', docNo, commitmentNote || `Khách hàng: ${customerName} · PO: ${poId}`, remaining);
 }
 
@@ -323,7 +370,8 @@ export function allocateReceipt(state, user, payload, today = businessToday()) {
   if (amount > receipt.amount - receipt.allocatedAmount || amount > balance(debt)) throw new Error('Số phân bổ vượt số tiền còn lại của khoản thu hoặc hóa đơn.');
   const allocationDate = date(payload.date, 'Ngày phân bổ', today, state.openingDate);
   if (parseBusinessDate(allocationDate) < parseBusinessDate(receipt.date)) throw new Error('Ngày phân bổ không trước ngày nhận tiền.');
-  const invoice = next.revenue.find(row => row.docNo === debt.docNo);
+  const invoice = next.revenue.find(row => String(row.docNo || '').toUpperCase() === String(debt.docNo || '').toUpperCase()) ||
+    next.revenue.find(row => row.customerName === receipt.customerName && ((debt.poLineId && Number(row.poLineId) === Number(debt.poLineId)) || (debt.poId && row.poId === debt.poId)) && row.cashCollected + amount <= row.netRevenue);
   if (invoice) {
     if (invoice.customerName !== receipt.customerName || invoice.cashCollected + amount > invoice.netRevenue) throw new Error('Chứng từ doanh thu chưa khớp khoản phải thu.');
     if (parseBusinessDate(allocationDate) < parseBusinessDate(invoice.recordDate)) throw new Error('Ngày phân bổ không được trước ngày ghi nhận hóa đơn.');
@@ -353,7 +401,8 @@ export function recordPayable(state, user, payload, items = []) {
   const poId = matchedRow?.poId || text(payload.poId || 'PO-NCC', 'Mã PO', 255);
   const poLineId = matchedRow ? matchedRow.rowId : null;
   const sku = matchedRow?.vendorItemNo || String(payload.sku || 'Tổng hợp theo PO').trim().slice(0, 255);
-  const category = matchedRow?.category || String(payload.category || 'Nội thất gỗ').trim().slice(0, 120);
+  const fallbackApCategory = items.find(item => item?.category)?.category || 'Chưa phân loại';
+  const category = String(matchedRow?.category || payload.category || fallbackApCategory).trim().slice(0, 120);
   const vendorNo = matchedRow?.vendorNo || text(payload.vendorNo || 'NCC', 'Mã nhà cung cấp', 120);
   const supplierName = matchedRow?.vendorName || text(payload.supplierName || 'Nhà cung cấp', 'Nhà cung cấp', 255);
   const requestNote = payload.requestNote ? String(payload.requestNote).trim().slice(0, 500) : undefined;
@@ -601,4 +650,12 @@ export function itemFinancialSummary(item, state) {
   return { revenue: related(state.revenue).reduce((sum, row) => sum + row.netRevenue, 0),
     receivables: ar.reduce((sum, row) => sum + balance(row), 0), payables: ap.reduce((sum, row) => sum + balance(row), 0),
     grouped: ap.some(row => poReferences(row).length > 1) };
+}
+
+export function receivableForAllocation(row, customerName) {
+  if (!row) return false;
+  const remaining = Number(row.originalAmount || 0) + Number(row.adjustment || 0) - Number(row.allocatedPaid || 0);
+  if (remaining <= 0) return false;
+  if (!customerName) return true;
+  return row.customerName === customerName;
 }

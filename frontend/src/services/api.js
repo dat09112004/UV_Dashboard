@@ -577,6 +577,7 @@ export function abortAllPageRequests() {
  * QA04 + QA08 + F09 + P1 05 + P2 13 Fix:
  * - Cố định cùng một retryId cho mỗi refreshToken đang xoay vòng để khi gặp lỗi mạng/5xx tạm thời và gọi lại,
  *   Backend khớp đúng retryKey của biên nhận xoay vòng trong cửa sổ 15 giây.
+ * - Khi xoay vòng thành công (200 OK), giải phóng pendingRefreshRetry để lần xoay vòng tiếp theo sinh retryId mới.
  * - Tôn trọng Retry-After và exponential backoff khi gặp lỗi tạm thời (QA04).
  */
 export async function refreshSession(version = sessionVersion) {
@@ -658,6 +659,7 @@ export async function refreshSession(version = sessionVersion) {
       const retryAfterMs = recordTransientBackoff(0);
       return { status: 'transient_error', token: null, retryId, retryAfterMs };
     }
+    pendingRefreshRetry = { refreshToken: null, retryId: null };
     refreshTransientFailures = 0;
     refreshBackoffUntil = 0;
     setAuthToken(json.data.token, json.data.refreshToken ?? null, {
@@ -722,6 +724,30 @@ export async function apiRequest(
     expiredErr.status = 401;
     expiredErr.code = 'SESSION_EXPIRED';
     throw expiredErr;
+  }
+
+  // Khi vừa F5 trang, authToken trong bộ nhớ bằng null nhưng phiên Cookie/sessionStorage vẫn còn hiệu lực:
+  // tự động đồng bộ chờ ensureValidSessionToken() trước khi gửi bất kỳ request nghiệp vụ nào để không bao giờ bị lỗi 401 giả.
+  if (!isAuth && !authToken && canUseSessionRefresh()) {
+    const ensured = await ensureValidSessionToken();
+    if (ensured.status === 'expired') {
+      clearAuthToken();
+      globalThis.window?.dispatchEvent?.(new Event(SESSION_EXPIRED_EVENT));
+      const expiredErr = new Error('Phiên đăng nhập đã hết hạn theo thời gian bảo mật. Vui lòng đăng nhập lại.');
+      expiredErr.status = 401;
+      expiredErr.code = 'SESSION_EXPIRED';
+      throw expiredErr;
+    }
+    if (ensured.status === 'transient_error') {
+      const transientErr = new Error(
+        ensured.message || 'Kết nối tạm thời gián đoạn khi làm mới phiên. Vui lòng thử lại.'
+      );
+      transientErr.status = ensured.httpStatus || 503;
+      transientErr.code = 'REFRESH_TRANSIENT_ERROR';
+      transientErr.retryable = true;
+      transientErr.retryAfterMs = ensured.retryAfterMs || 300;
+      throw transientErr;
+    }
   }
 
   const sentToken = authToken;
@@ -805,7 +831,7 @@ export async function apiRequest(
     sending = false;
   }
 
-  if (!isAuth && response.status === 401 && sentToken && version === sessionVersion) {
+  if (!isAuth && response.status === 401 && (sentToken || canUseSessionRefresh()) && version === sessionVersion) {
     if (authToken !== sentToken && authToken) {
       response = await send(authToken);
     } else if (refreshToken || persistedAccountId || refreshExpiresAt > Date.now()) {
