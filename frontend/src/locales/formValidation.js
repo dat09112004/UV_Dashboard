@@ -2,6 +2,7 @@ import { phrase, t } from './i18n.js';
 
 const localizedMessages = new WeakMap();
 
+// Chức năng: Đặt lại (resetLocalizedValidation - Localized Validation) phục vụ xử lý dữ liệu trong formValidation.js
 export function resetLocalizedValidation(field) {
   if (localizedMessages.has(field) && field.validationMessage === localizedMessages.get(field)) {
     field.setCustomValidity('');
@@ -29,6 +30,7 @@ export function localizeInvalidInput(event) {
   localizedMessages.set(field, message);
 }
 
+// Chức năng: Làm sạch (clearLocalizedValidation - Localized Validation) phục vụ xử lý dữ liệu trong formValidation.js
 export function clearLocalizedValidation(event) {
   resetLocalizedValidation(event.target);
 }

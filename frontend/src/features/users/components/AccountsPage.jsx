@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Lock, LockOpen, RotateCcw, Search } from 'lucide-react';
+import { Lock, LockOpen, RotateCcw, Search, UserPlus } from 'lucide-react';
 import { phrase, t } from '../../../locales/i18n.js';
 import { useDebouncedValue } from '../../../hooks/useDebounce.js';
 import { useProgressivePagination } from '../../../hooks/useProgressivePagination.js';
 import ProgressivePaginationBar from '../../../components/common/ProgressivePaginationBar.jsx';
+import FormWindowDialog from '../../../components/common/FormWindowDialog.jsx';
 import {
   canEditAccount,
   canToggleAccountStatus,
@@ -16,12 +17,14 @@ import {
   ROLE_PROFILES,
 } from '../../../utils/roles.js';
 
+// Chức năng: Ô chọn vai trò người dùng khi tạo mới hoặc cập nhật phân quyền tài khoản
 function RoleSelect({ roles, defaultValue, onChange }) {
   return <label>{t('Vai trò')}<select name="role" defaultValue={defaultValue} onChange={onChange} required>
     {roles.map(role => <option key={role} value={role}>{t(ROLE_PROFILES[role].label)}</option>)}
   </select></label>;
 }
 
+// Chức năng: Bảng đánh dấu các phân hệ được phép truy cập của từng tài khoản hoặc áp dụng đồng loạt cho cả phòng ban
 function NavigationFields({ account, roles, departmentNavigation, onApplyDepartment, onCancel }) {
   const [role, setRole] = useState(account.role);
   const [selected, setSelected] = useState(() =>
@@ -48,7 +51,7 @@ function NavigationFields({ account, roles, departmentNavigation, onApplyDepartm
           {t(NAVIGATION_LABELS[section] || section)}
         </label>)}
       </fieldset>
-      <p className="management-note">{t('Lưu thay đổi để cập nhật vai trò tài khoản. Dùng nút áp dụng để cập nhật các trang cho cả phòng ban.')}</p>
+      
       <button type="button" className="row-detail-button" disabled={!selectedForDepartment.length}
         onClick={() => onApplyDepartment(role, selectedForDepartment)}>
         {t('Áp dụng cho toàn bộ phòng ban')}
@@ -61,7 +64,9 @@ function NavigationFields({ account, roles, departmentNavigation, onApplyDepartm
   </>;
 }
 
+// Chức năng: Trang Quản lý tài khoản (chỉ dành cho Admin): tạo tài khoản Sale/Kế toán và cấp quyền menu phòng ban qua chế độ cửa sổ (Modal Window) chuẩn responsive
 export default function AccountsPage({ accounts, departmentNavigation, actor, onAction, busy }) {
+  const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [confirmation, setConfirmation] = useState(null);
   const [confirmError, setConfirmError] = useState('');
@@ -75,14 +80,15 @@ export default function AccountsPage({ accounts, departmentNavigation, actor, on
   const debouncedStatusFilter = useDebouncedValue(statusFilter, 150);
 
   const availableRoles = useMemo(() => {
-    const fromAccounts = [...new Set((accounts || []).map(acc => acc.role).filter(Boolean))];
-    return fromAccounts.length > 0 ? fromAccounts : Object.keys(ROLE_PROFILES);
+    const fromAccounts = [...new Set((accounts || []).map(acc => acc.role).filter(r => r && r !== 'Admin'))];
+    return fromAccounts.length > 0 ? fromAccounts : Object.keys(ROLE_PROFILES).filter(r => r !== 'Admin');
   }, [accounts]);
 
   const dialogRef = useRef(null);
   const editHeading = useRef(null);
   const editTrigger = useRef(null);
   useEffect(() => { if (editingId) editHeading.current?.focus(); }, [editingId]);
+  // Chức năng: Đóng (closeEditor - Editor) phục vụ xử lý dữ liệu trong AccountsPage.jsx
   const closeEditor = () => { setEditingId(null); requestAnimationFrame(() => editTrigger.current?.focus()); };
   useEffect(() => {
     if (confirmation && !dialogRef.current.open) dialogRef.current.showModal();
@@ -93,6 +99,7 @@ export default function AccountsPage({ accounts, departmentNavigation, actor, on
   const filteredAccounts = useMemo(() => {
     const q = debouncedSearch.trim().toLowerCase();
     return accounts.filter(acc => {
+      if (acc.role === 'Admin') return false;
       if (debouncedRoleFilter !== 'all' && acc.role !== debouncedRoleFilter) return false;
       if (debouncedStatusFilter !== 'all' && acc.status !== debouncedStatusFilter) return false;
       if (q) {
@@ -113,20 +120,27 @@ export default function AccountsPage({ accounts, departmentNavigation, actor, on
   });
   const pagedAccounts = pagination.visibleItems;
 
+  // Chức năng: Xử lý nghiệp vụ (submit - submit) phục vụ xử lý dữ liệu trong AccountsPage.jsx
   const submit = async (event, action) => {
     event.preventDefault();
     const form = event.currentTarget;
     const fields = new FormData(form);
     const payload = Object.fromEntries(fields);
     if (!await onAction(action, payload)) return;
-    if (action === 'create-account') form.reset();
-    else closeEditor();
+    if (action === 'create-account') {
+      form.reset();
+      setShowCreateModal(false);
+    } else {
+      closeEditor();
+    }
   };
 
+  // Chức năng: Xử lý nghiệp vụ (requestConfirmation - Confirmation) phục vụ xử lý dữ liệu trong AccountsPage.jsx
   const requestConfirmation = request => {
     setConfirmError('');
     setConfirmation(request);
   };
+  // Chức năng: Xử lý nghiệp vụ (confirm - confirm) phục vụ xử lý dữ liệu trong AccountsPage.jsx
   const confirm = async () => {
     if (!confirmation || busy) return;
     setConfirmError('');
@@ -136,7 +150,7 @@ export default function AccountsPage({ accounts, departmentNavigation, actor, on
     if (action === 'apply-department-navigation') closeEditor();
   };
 
-  return <div className="management-grid">
+  return <div className="space-y-4">
     <dialog className="account-confirm-dialog" ref={dialogRef} aria-labelledby="account-confirm-title"
       aria-describedby="account-confirm-description"
       onClose={() => setConfirmation(null)} onCancel={event => { if (busy) event.preventDefault(); }}>
@@ -151,31 +165,75 @@ export default function AccountsPage({ accounts, departmentNavigation, actor, on
         </div>
       </>}
     </dialog>
-    <section className="analytics-card management-panel">
-      <h2>{t('Tạo tài khoản')}</h2>
+
+    {/* Cửa sổ Tạo tài khoản mới */}
+    <FormWindowDialog
+      open={showCreateModal}
+      title="Tạo tài khoản mới"
+      subtitle="Quản lý tài khoản & Phân quyền phòng ban"
+      size="md"
+      busy={busy}
+      onClose={() => setShowCreateModal(false)}
+    >
       <form className="workflow-form" onSubmit={event => submit(event, 'create-account')}>
-        <fieldset disabled={busy}>
-          <label>{t('Họ và tên')} <span className="required-mark" aria-hidden="true">*</span><input name="name" autoComplete="name" required maxLength={100} /></label>
-          <label>{t('Email')} <span className="required-mark" aria-hidden="true">*</span><input name="email" type="email" autoComplete="off" required maxLength={254} /></label>
+        <fieldset disabled={busy} className="item-form-grid">
+          <label className="workflow-wide">{t('Họ và tên')} <span className="required-mark" aria-hidden="true">*</span><input name="name" autoComplete="name" required maxLength={100} /></label>
+          <label className="workflow-wide">{t('Email')} <span className="required-mark" aria-hidden="true">*</span><input name="email" type="email" autoComplete="off" required maxLength={254} /></label>
           <label>{t('Mật khẩu ban đầu')} <span className="required-mark" aria-hidden="true">*</span><input name="password" type="password" autoComplete="new-password" required minLength={12} maxLength={128} /></label>
           <RoleSelect roles={roles} defaultValue="Sale" />
-          <div className="workflow-footer"><button className="primary" type="submit">{t('Tạo tài khoản')}</button></div>
         </fieldset>
+        <div className="workflow-footer">
+          <button type="button" disabled={busy} onClick={() => setShowCreateModal(false)}>{t('Hủy')}</button>
+          <button className="primary" type="submit" disabled={busy}>{t('Tạo tài khoản')}</button>
+        </div>
       </form>
-      <p className="management-note">{t('Quyền của tài khoản được áp dụng theo vai trò đã chọn.')}</p>
-    </section>
+    </FormWindowDialog>
+
+    {/* Cửa sổ Cấp quyền & Phân hệ truy cập */}
+    <FormWindowDialog
+      open={Boolean(editing && canEditAccount(actor, editing))}
+      title={editing ? `${t('Cấp quyền')} · ${editing.name}` : t('Cấp quyền')}
+      subtitle={editing?.email || ''}
+      size="md"
+      busy={busy}
+      onClose={closeEditor}
+    >
+      {editing && canEditAccount(actor, editing) && (
+        <form id="account-permissions-form" className="workflow-form" key={editing.id} onSubmit={event => submit(event, 'update-account')}>
+          <fieldset disabled={busy}>
+            <input type="hidden" name="id" value={editing.id} />
+            {editing.tokenVersion !== undefined && <input type="hidden" name="expectedTokenVersion" value={editing.tokenVersion} />}
+            <h3 ref={editHeading} tabIndex={-1} className="sr-only">{t('Cấp quyền')} · {editing.name}</h3>
+            <NavigationFields roles={roles} account={editing} departmentNavigation={departmentNavigation}
+              onCancel={closeEditor} onApplyDepartment={(role, navigation) => requestConfirmation({
+                action: 'apply-department-navigation', title: 'Áp dụng cho toàn bộ phòng ban', label: 'Áp dụng',
+                description: phrase('Dùng các trang đã chọn cho tất cả tài khoản thuộc § và làm mặc định cho tài khoản mới?', t(DEPARTMENT_ROLES[role])),
+                payload: { role, sections: navigation, navigation },
+              })} />
+          </fieldset>
+        </form>
+      )}
+    </FormWindowDialog>
 
     <section className="analytics-card management-panel">
       <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
         <h2>{t('Danh sách tài khoản')}</h2>
         <div className="management-toolbar">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => setShowCreateModal(true)}
+            className="row-primary-button flex items-center gap-1.5"
+          >
+            <UserPlus size={15} />
+            <span>{t('+ Tạo tài khoản')}</span>
+          </button>
           <label className="management-toolbar-search">
             <Search size={14} className="text-slate-400 shrink-0" />
             <input
               type="search"
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
-              placeholder={t('Tìm tên, email…')}
               aria-label={t('Tìm tài khoản')}
             />
           </label>
@@ -228,8 +286,7 @@ export default function AccountsPage({ accounts, departmentNavigation, actor, on
                   aria-expanded={editingId === account.id} aria-controls={editingId === account.id ? 'account-permissions-form' : undefined}
                   onClick={event => {
                     editTrigger.current = event.currentTarget;
-                    if (editingId === account.id) editHeading.current?.focus();
-                    else setEditingId(account.id);
+                    setEditingId(account.id);
                   }}>{t('Cấp quyền')}</button>}
                 {canToggle && <button className="account-lock-button" type="button" disabled={busy} aria-haspopup="dialog"
                   aria-label={`${t(actionLabel)} · ${account.name}`} title={t(actionLabel)}
@@ -244,20 +301,6 @@ export default function AccountsPage({ accounts, departmentNavigation, actor, on
         </table>
       </div>
       <ProgressivePaginationBar pagination={pagination} itemUnit="tài khoản" />
-
-      {canEditAccount(actor, editing) && <form id="account-permissions-form" className="workflow-form management-edit" key={editing.id} onSubmit={event => submit(event, 'update-account')}>
-        <fieldset disabled={busy}>
-          <input type="hidden" name="id" value={editing.id} />
-          {editing.tokenVersion !== undefined && <input type="hidden" name="expectedTokenVersion" value={editing.tokenVersion} />}
-          <h3 ref={editHeading} tabIndex={-1}>{t('Cấp quyền')} · {editing.name}</h3>
-          <NavigationFields roles={roles} account={editing} departmentNavigation={departmentNavigation}
-            onCancel={closeEditor} onApplyDepartment={(role, navigation) => requestConfirmation({
-              action: 'apply-department-navigation', title: 'Áp dụng cho toàn bộ phòng ban', label: 'Áp dụng',
-              description: phrase('Dùng các trang đã chọn cho tất cả tài khoản thuộc § và làm mặc định cho tài khoản mới?', t(DEPARTMENT_ROLES[role])),
-              payload: { role, sections: navigation, navigation },
-            })} />
-        </fieldset>
-      </form>}
     </section>
   </div>;
 }

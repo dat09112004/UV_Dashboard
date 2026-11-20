@@ -15,3 +15,120 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Compact Icon Action Buttons with Hover Tooltip */
+.row-actions.is-icon-row {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: nowrap;
+}
+.icon-action-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #1e293b;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, transform 0.1s ease;
+}
+.icon-action-btn:hover:not(:disabled) {
+  background: #f1f5f9;
+  border-color: #94a3b8;
+  transform: translateY(-1px);
+}
+.icon-action-btn.is-primary {
+  background: #1558c9;
+  border-color: #1558c9;
+  color: #ffffff;
+}
+.icon-action-btn.is-primary:hover:not(:disabled) {
+  background: #102542;
+  border-color: #102542;
+}
+.icon-action-btn.is-success {
+  background: #059669;
+  border-color: #059669;
+  color: #ffffff;
+}
+.icon-action-btn.is-success:hover:not(:disabled) {
+  background: #047857;
+}
+.icon-action-btn.is-danger {
+  background: #fff1f2;
+  border-color: #fecdd3;
+  color: #be123c;
+}
+.icon-action-btn.is-danger:hover:not(:disabled) {
+  background: #ffe4e6;
+  border-color: #fda4af;
+}
+.icon-action-btn.is-warning {
+  background: #fffbeb;
+  border-color: #fde68a;
+  color: #b45309;
+}
+.icon-action-btn.is-warning:hover:not(:disabled) {
+  background: #fef3c7;
+}
+.icon-action-btn.is-muted {
+  background: #f8fafc;
+  border-color: #e2e8f0;
+  color: #64748b;
+  cursor: default;
+}
+.icon-action-btn[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 7px);
+  right: 0;
+  white-space: nowrap;
+  padding: 5px 9px;
+  border-radius: 6px;
+  background: #102542;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.2;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(3px);
+  transition: opacity 0.14s ease, transform 0.14s ease;
+  z-index: 60;
+  box-shadow: 0 6px 18px rgba(16, 37, 66, 0.22);
+}
+.icon-action-btn[data-tooltip]:hover::after,
+.icon-action-btn[data-tooltip]:focus-visible::after {
+  opacity: 1;
+  transform: translateY(0);
+}
+.role-compact-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+.role-compact-tile {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.role-compact-tile span {
+  font-size: 11px;
+  font-weight: 600;
+  color: #475569;
+}
+.role-compact-tile strong {
+  font-size: 15px;
+  font-weight: 700;
+  color: #102542;
+}

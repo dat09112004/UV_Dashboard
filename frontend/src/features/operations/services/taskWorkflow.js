@@ -16,11 +16,58 @@ export const REMINDER_PENDING = 'Chờ giao việc';
 export const REMINDER_ASSIGNED = 'Đã giao việc';
 export const REMINDER_RESOLVED = 'Đã xử lý';
 
+// Chức năng: Kiểm tra đơn hàng PO có phải do nhân viên Sale tự tạo và tự động nhận xử lý hay không
+export function isSaleSelfOwnedOrder(order) {
+  if (!order || typeof order !== 'object') return false;
+  const target = order.data || order.item || order;
+  if (target.ownerType === 'sale_self_owned' || target.createdByRole === 'Sale') return true;
+  const historyList = Array.isArray(target.trackingHistory) ? target.trackingHistory : [];
+  const firstHist = historyList.length > 0 ? historyList[0] : null;
+  const latestHist = historyList.length > 0 ? historyList[historyList.length - 1] : null;
+  const histMeta =
+    latestHist?.after?.createdById || latestHist?.after?.ownerType
+      ? latestHist.after
+      : firstHist?.after || {};
+  return histMeta.ownerType === 'sale_self_owned' || histMeta.createdByRole === 'Sale';
+}
+
+// Chức năng: Kiểm tra đơn hàng PO có thuộc thẩm quyền để Sếp (CEO / Admin) phân công người xử lý trong phần Giao việc hay không
+export function canExecutiveAssignOrder(order) {
+  if (!order || typeof order !== 'object') return false;
+  return !isSaleSelfOwnedOrder(order);
+}
+
+// Chức năng: Kiểm tra chứng từ tài chính (Doanh thu / Phải thu AR / Phải trả AP) có phải do Kế toán tạo và tự động nhận xử lý hay không
+export function isAccountantSelfOwnedFinance(record) {
+  if (!record || typeof record !== 'object') return false;
+  const target = record.data || record.item || record;
+  return target.ownerType === 'accountant_self_owned' || target.createdByRole === 'Accountant';
+}
+
+// Chức năng: Kiểm tra chứng từ tài chính có thuộc thẩm quyền để Sếp (CEO / Admin) phân công xử lý hay không
+export function canExecutiveAssignFinance(record) {
+  if (!record || typeof record !== 'object') return false;
+  return !isAccountantSelfOwnedFinance(record);
+}
+
+
+// Chức năng: Phân loại công việc thuộc Khung 1 (Giao việc tới đơn hàng PO) hay Khung 2 (Giao những việc bên ngoài)
+export function resolveTaskCategory(task) {
+  if (!task || typeof task !== 'object') return 'external';
+  if (task.taskCategory === 'order' || task.sourceAlert?.type === 'orders') return 'order';
+  return 'external';
+}
+
+// Chức năng: Kiểm tra trạng thái (isTaskEmployee - Task Employee) phục vụ xử lý dữ liệu trong taskWorkflow.js
 export const isTaskEmployee = user => user?.status === 'active' && Object.hasOwn(TASK_DEPARTMENTS, user.role);
+// Chức năng: Kiểm tra quyền (canReceiveTasks - Receive Tasks) phục vụ xử lý dữ liệu trong taskWorkflow.js
 export const canReceiveTasks = user => isTaskEmployee(user) && canOpenSection(user, 'tasks');
+// Chức năng: Kiểm tra quyền (canAssignTasks - Assign Tasks) phục vụ xử lý dữ liệu trong taskWorkflow.js
 export const canAssignTasks = user => isExecutiveRole(user?.role) && canOpenSection(user, 'assignments');
+// Chức năng: Kiểm tra quyền (canSendReminders - Send Reminders) phục vụ xử lý dữ liệu trong taskWorkflow.js
 export const canSendReminders = user => Boolean(user?.status === 'active' && user?.role !== 'CEO' && (isTaskEmployee(user) || isExecutiveRole(user.role)) && canOpenSection(user, 'reminders'));
 
+// Chức năng: Kiểm tra quyền (canManageTask - Manage Task) phục vụ xử lý dữ liệu trong taskWorkflow.js
 export function canManageTask(user, task, users) {
   if (!task || !canAssignTasks(user)) return false;
   if (isExecutiveRole(user.role)) return true;
@@ -28,20 +75,26 @@ export function canManageTask(user, task, users) {
   return Boolean(users && !canAssignTasks(users.find(account => account.id === task.assignerId)));
 }
 
+// Chức năng: Kiểm tra quyền (canWorkOnAssignedTask - Work On Assigned Task) phục vụ xử lý dữ liệu trong taskWorkflow.js
 export const canWorkOnAssignedTask = (user, task) => Boolean(task && canReceiveTasks(user) && task.assigneeId === user.id &&
   (!task.department || task.department === user.role));
+// Chức năng: Kiểm tra quyền (canViewManagedTask - View Managed Task) phục vụ xử lý dữ liệu trong taskWorkflow.js
 export const canViewManagedTask = (user, task, users) => Boolean(task &&
   ((isExecutiveRole(user?.role) && canAssignTasks(user)) || canManageTask(user, task, users)));
+// Chức năng: Kiểm tra quyền (canViewTask - View Task) phục vụ xử lý dữ liệu trong taskWorkflow.js
 export const canViewTask = (user, task, users) => canViewManagedTask(user, task, users) || canWorkOnAssignedTask(user, task);
+// Chức năng: Kiểm tra quyền (canDiscussTask - Discuss Task) phục vụ xử lý dữ liệu trong taskWorkflow.js
 export const canDiscussTask = (user, task, users) => canManageTask(user, task, users) || canWorkOnAssignedTask(user, task);
 export const TASK_EXPIRED_MESSAGE = 'Công việc đã hết hạn và chỉ có thể xem.';
 
+// Chức năng: Xử lý nghiệp vụ (taskStatusAt - Status At) phục vụ xử lý dữ liệu trong taskWorkflow.js
 export function taskStatusAt(task, today = businessToday()) {
   if (isTaskOverdue(task, today)) return TASK_EXPIRED;
   if (task.status === TASK_REVIEW && task.reviews?.at(-1)?.approve === false) return TASK_REREVIEW;
   return task.status === 'Yêu cầu bổ sung' ? TASK_RETURNED : task.status;
 }
 
+// Chức năng: Đối chiếu khớp (matchAlertTask - Alert Task) phục vụ xử lý dữ liệu trong taskWorkflow.js
 export function matchAlertTask(task, alertRef) {
   if (!task || !alertRef) return false;
   if (task.sourceAlert) return matchesAlert(task.sourceAlert, alertRef);
@@ -51,12 +104,14 @@ export function matchAlertTask(task, alertRef) {
   return hay.includes(ref);
 }
 
+// Chức năng: Kiểm tra khớp (matchesAlert - Alert) phục vụ xử lý dữ liệu trong taskWorkflow.js
 function matchesAlert(source, target) {
   if (target.type && source.type !== target.type) return false;
   if (source.reference && target.reference) return source.reference === target.reference;
   return Boolean(target.id && source.id === target.id);
 }
 
+// Chức năng: Xử lý nghiệp vụ (reminderMatchesAlert - Matches Alert) phục vụ xử lý dữ liệu trong taskWorkflow.js
 export function reminderMatchesAlert(reminder, alertRef) {
   return matchesAlert({
     type: reminder.alertType || 'orders', id: reminder.alertId, reference: reminder.reference,
@@ -92,12 +147,70 @@ export function resolveAlertAssignmentInfo(alertRef, tasks = [], accounts = [], 
 
   const matchedReminders = (reminders || []).filter(reminder => reminderMatchesAlert(reminder, alertRef));
   const pendingReminders = matchedReminders.filter(reminder => reminder.status === REMINDER_PENDING);
+  // Chức năng: Xử lý nghiệp vụ (reminderDate - Date) phục vụ xử lý dữ liệu trong taskWorkflow.js
   const reminderDate = reminder => reminder?.updatedAt || reminder?.createdAt || '';
   const lastReminder = (pendingReminders.length ? pendingReminders : matchedReminders)
     .reduce((latest, reminder) => reminderDate(reminder) >= reminderDate(latest) ? reminder : latest, null);
   const reminderCount = pendingReminders.reduce((count, reminder) => count + (Number(reminder.remindCount) || 1), 0);
 
   if (!chosenTasks.length) {
+    if (
+      (alertRef.type === 'orders' || String(alertRef.id || '').startsWith('order-')) &&
+      isSaleSelfOwnedOrder(alertRef)
+    ) {
+      const orderData = alertRef.data || alertRef.item || alertRef;
+      const saleOwnerName = orderData.assignedSaleName || orderData.createdByName || 'Nhân viên Sale';
+      const reminderSuffix = pendingReminders.length > 0
+        ? ` · Có ${pendingReminders.length} nhắc việc mới`
+        : '';
+      return {
+        isAssigned: true,
+        status: TASK_ACTIVE,
+        assigneesText: saleOwnerName,
+        departmentText: 'Phòng Sale',
+        assignerText: orderData.createdByName || saleOwnerName,
+        ownerType: 'sale_self_owned',
+        isSaleSelfOwned: true,
+        deadline: orderData.etaDate || orderData.expectedReceiptDate || '',
+        taskIds: [],
+        pendingRemindersCount: pendingReminders.length,
+        lastReminder,
+        italicLine: `Sale tạo & đảm nhận: ${saleOwnerName} (Phòng Sale)${reminderSuffix}`,
+        summaryText: `Sale tạo & đảm nhận: ${saleOwnerName} (Phòng Sale)${reminderSuffix}`,
+        tone: 'assigned',
+      };
+    }
+
+    if (
+      (['receivables', 'payables', 'revenue'].includes(alertRef.type) ||
+        String(alertRef.id || '').startsWith('receivables-') ||
+        String(alertRef.id || '').startsWith('payables-')) &&
+      isAccountantSelfOwnedFinance(alertRef)
+    ) {
+      const finData = alertRef.data || alertRef.item || alertRef;
+      const accOwnerName =
+        finData.assignedAccountantName || finData.createdByName || finData.pic || 'Nhân viên Kế toán';
+      const reminderSuffix = pendingReminders.length > 0
+        ? ` · Có ${pendingReminders.length} nhắc việc mới`
+        : '';
+      return {
+        isAssigned: true,
+        status: TASK_ACTIVE,
+        assigneesText: accOwnerName,
+        departmentText: 'Phòng Kế toán',
+        assignerText: finData.createdByName || accOwnerName,
+        ownerType: 'accountant_self_owned',
+        isAccountantSelfOwned: true,
+        deadline: finData.dueDate && finData.dueDate !== '—' ? finData.dueDate : '',
+        taskIds: [],
+        pendingRemindersCount: pendingReminders.length,
+        lastReminder,
+        italicLine: `Kế toán tạo & đảm nhận: ${accOwnerName} (Phòng Kế toán)${reminderSuffix}`,
+        summaryText: `Kế toán tạo & đảm nhận: ${accOwnerName} (Phòng Kế toán)${reminderSuffix}`,
+        tone: 'assigned',
+      };
+    }
+
     const reminderSuffix = pendingReminders.length > 0
       ? ` · Đã nhắc sếp (${reminderCount} lần, gần nhất bởi ${lastReminder?.senderName || 'nhân viên'})`
       : '';
@@ -152,9 +265,12 @@ export const FILE_LIMIT = 1024 * 1024;
 export const FILE_COUNT = 3;
 export const FILE_ACCEPT = '.pdf,.docx,.xlsx,.pptx,.png,.jpg,.jpeg,.csv,.txt';
 const extensions = new Set(FILE_ACCEPT.split(','));
+// Chức năng: Xử lý nghiệp vụ (invalidFilename - Filename) phục vụ xử lý dữ liệu trong taskWorkflow.js
 const invalidFilename = name => /[\\/]/.test(name) || [...name].some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127);
+// Chức năng: Xử lý nghiệp vụ (required - required) phục vụ xử lý dữ liệu trong taskWorkflow.js
 const required = (value, max) => typeof value === 'string' && value.trim().length > 0 && value.trim().length <= max;
 
+// Chức năng: Xử lý nghiệp vụ (appendFiles - Files) phục vụ xử lý dữ liệu trong taskWorkflow.js
 function appendFiles(state, input = []) {
   if (!Array.isArray(input) || input.length > FILE_COUNT) throw new Error('Tối đa 3 tệp và tổng dung lượng 1 MB mỗi lần gửi.');
   let total = 0;
@@ -180,11 +296,13 @@ function appendFiles(state, input = []) {
   });
 }
 
+// Chức năng: Xử lý nghiệp vụ (record - record) phục vụ xử lý dữ liệu trong taskWorkflow.js
 function record(task, actor, text, now) {
   task.comments.push({ id: newRecordId('TASKLOG'), author: actor.name, time: now.toISOString(), text });
 }
 
-function createTasksFromPayload(state, users, actor, payload, now = new Date()) {
+// Chức năng: Tạo mới (createTasksFromPayload - Tasks From Payload) phục vụ xử lý dữ liệu trong taskWorkflow.js
+function createTasksFromPayload(state, users, actor, payload, now = new Date(), ordersItems = [], financeState = null) {
   const today = businessToday(now);
   const staff = users.filter(canReceiveTasks);
   if (!canAssignTasks(actor)) throw new Error('Chỉ CEO và Admin được giao việc.');
@@ -204,6 +322,50 @@ function createTasksFromPayload(state, users, actor, payload, now = new Date()) 
     throw new Error('Nguồn báo động đỏ không hợp lệ.');
   }
   const sourceAlert = source ? { type: source.type, id: source.id.trim(), reference: source.reference.trim() } : null;
+  const isOrderAssignment = payload.taskCategory === 'order' || sourceAlert?.type === 'orders';
+  if (isOrderAssignment) {
+    const rawOrderRowId =
+      payload.orderRowId ??
+      (sourceAlert?.id?.startsWith('order-') ? Number(sourceAlert.id.slice(6)) : null);
+    const matchedOrder =
+      source?.data ||
+      (Array.isArray(ordersItems) &&
+        ordersItems.find(
+          item =>
+            (rawOrderRowId !== null &&
+              Number.isFinite(rawOrderRowId) &&
+              Number(item.rowId) === rawOrderRowId) ||
+            (sourceAlert?.reference && item.poId === sourceAlert.reference)
+        )) ||
+      null;
+    if (matchedOrder && isSaleSelfOwnedOrder(matchedOrder)) {
+      throw new Error(
+        `Đơn hàng ${matchedOrder.poId || sourceAlert?.reference || ''} do nhân viên Sale (${matchedOrder.createdByName || matchedOrder.assignedSaleName || 'Phòng Sale'}) tạo và đã tự động thuộc quyền đảm nhận của Sale đó. Sếp chỉ có quyền giao việc xử lý cho các đơn hàng do Sếp tạo.`
+      );
+    }
+  }
+  if (sourceAlert && ['receivables', 'payables'].includes(sourceAlert.type)) {
+    const finPool = [
+      ...(financeState?.receivables || []),
+      ...(financeState?.payables || []),
+      ...(financeState?.revenue || []),
+    ];
+    const refUpper = String(sourceAlert.reference || '').trim().toUpperCase();
+    const matchedFinance =
+      source?.data ||
+      finPool.find(
+        item =>
+          (sourceAlert.id && (`${sourceAlert.type}-${item.id}` === sourceAlert.id || item.id === sourceAlert.id)) ||
+          (refUpper && String(item.docNo || '').trim().toUpperCase() === refUpper)
+      ) ||
+      null;
+    if (matchedFinance && isAccountantSelfOwnedFinance(matchedFinance)) {
+      throw new Error(
+        `Chứng từ ${matchedFinance.docNo || sourceAlert.reference || ''} do nhân viên Kế toán (${matchedFinance.createdByName || matchedFinance.assignedAccountantName || 'Phòng Kế toán'}) tạo và đã tự động thuộc quyền đảm nhận của Kế toán đó. Sếp chỉ có quyền giao việc xử lý cho các chứng từ do Sếp tạo.`
+      );
+    }
+  }
+  const taskCategory = isOrderAssignment ? 'order' : 'external';
   const managerNote = typeof payload.managerNote === 'string' && payload.managerNote.trim()
     ? payload.managerNote.trim().slice(0, 500)
     : '';
@@ -215,6 +377,7 @@ function createTasksFromPayload(state, users, actor, payload, now = new Date()) 
     createdIds.push(taskId);
     state.tasks.push({
       id: taskId, assignerId: actor.id, assigneeId: recipient.id, department, batchId,
+      taskCategory,
       title: payload.title.trim(), description: payload.description.trim(),
       ...(managerNote && { managerNote }),
       deadline: formatBusinessDate(payload.deadline),
@@ -243,13 +406,14 @@ function createTasksFromPayload(state, users, actor, payload, now = new Date()) 
   return createdIds;
 }
 
-export function applyTaskAction(state, users, actor, action, payload, now = new Date()) {
+// Chức năng: Áp dụng (applyTaskAction - Task Action) phục vụ xử lý dữ liệu trong taskWorkflow.js
+export function applyTaskAction(state, users, actor, action, payload, now = new Date(), ordersItems = [], financeState = null) {
   const today = businessToday(now);
   const staff = users.filter(canReceiveTasks);
   state.reminders ||= [];
 
   if (action === 'create-task') {
-    createTasksFromPayload(state, users, actor, payload, now);
+    createTasksFromPayload(state, users, actor, payload, now, ordersItems, financeState);
     return state;
   }
 
@@ -345,7 +509,7 @@ export function applyTaskAction(state, users, actor, action, payload, now = new 
         id: reminder.alertId || `${reminder.alertType || 'orders'}-${reminder.reference}`,
         reference: reminder.reference,
       },
-    }, now);
+    }, now, ordersItems, financeState);
     reminder.status = REMINDER_ASSIGNED;
     reminder.assignedById = actor.id;
     reminder.assignedByName = actor.name;
@@ -428,6 +592,7 @@ export function applyTaskAction(state, users, actor, action, payload, now = new 
   return state;
 }
 
+// Chức năng: Xử lý nghiệp vụ (encodeTaskFiles - Task Files) phục vụ xử lý dữ liệu trong taskWorkflow.js
 export async function encodeTaskFiles(entries) {
   const files = entries.filter(file => file.size > 0 || file.name);
   if (files.length > FILE_COUNT || files.reduce((total, file) => total + file.size, 0) > FILE_LIMIT) {
@@ -441,17 +606,21 @@ export async function encodeTaskFiles(entries) {
   }));
 }
 
+// Chức năng: Lọc (filterTaskRows - Task Rows) phục vụ xử lý dữ liệu trong taskWorkflow.js
 export function filterTaskRows(rows, {
   statusFilter = 'all',
   searchQuery = '',
   assigneeFilter = 'all',
   deadlineFilter = 'all',
+  categoryFilter = 'all',
   accounts = [],
   today = businessToday(),
 } = {}) {
   const q = String(searchQuery ?? '').trim().toLowerCase();
   const todayDate = parseBusinessDate(today);
   return rows.filter(row => {
+    if (categoryFilter === 'order' && resolveTaskCategory(row) !== 'order') return false;
+    if (categoryFilter === 'external' && resolveTaskCategory(row) !== 'external') return false;
     if (statusFilter === 'alert-tasks') {
       if (!row.sourceAlert || [TASK_DONE, TASK_EXPIRED].includes(row.status)) return false;
     } else if (statusFilter !== 'all' && row.status !== statusFilter) {

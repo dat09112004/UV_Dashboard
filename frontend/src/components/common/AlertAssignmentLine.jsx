@@ -50,7 +50,7 @@ export default function AlertAssignmentLine({
             onRemind(alertRef, info);
           }}
           className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-amber-400 bg-amber-50 hover:bg-amber-100 text-amber-900 text-[11px] font-semibold not-italic transition cursor-pointer"
-          title={t('Nhắc sếp (CEO / Admin) giao việc hoặc đôn đốc xử lý cảnh báo này')}
+          title={t('Nhắc Ban Giám đốc giao việc hoặc đôn đốc xử lý cảnh báo này')}
         >
           <BellRing size={11} className="shrink-0" />
           <span>{t(info.pendingRemindersCount > 0 ? 'Nhắc lại sếp' : 'Nhắc việc sếp')}</span>

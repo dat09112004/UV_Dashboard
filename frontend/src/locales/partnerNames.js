@@ -15,7 +15,9 @@ const englishNames = new Map([
   ['CÔNG TY TNHH ALDY HUTA & HUBEI ROCKY', 'Aldy Huta Co., Ltd. & Hubei Rocky'],
 ]);
 
+// Chức năng: Xử lý nghiệp vụ (englishPartnerName - Partner Name) phục vụ xử lý dữ liệu trong partnerNames.js
 export function englishPartnerName(value) {
+  // Chức năng: Xử lý nghiệp vụ (lookup - lookup) phục vụ xử lý dữ liệu trong partnerNames.js
   const lookup = name => englishNames.get(name.normalize('NFC').toLocaleUpperCase('vi-VN'));
   const direct = lookup(value);
   if (direct) return direct;

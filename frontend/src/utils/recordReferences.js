@@ -1,3 +1,4 @@
+// Chức năng: Xử lý nghiệp vụ (poReferences - References) phục vụ xử lý dữ liệu trong recordReferences.js
 export function poReferences(record) {
   if (Array.isArray(record.poIds)) return record.poIds;
   const value = String(record.poId || '').trim();
@@ -9,6 +10,7 @@ export function poReferences(record) {
   return tokens.map(token => token.startsWith('PO-') ? token : `PO-${match[1]}-${/^[A-Z]$/i.test(token) ? first.replace(/[A-Z]$/i, '') + token : token}`);
 }
 
+// Chức năng: Xử lý nghiệp vụ (linkedItems - Items) phục vụ xử lý dữ liệu trong recordReferences.js
 export function linkedItems(record, items) {
   if (record.poLineId !== undefined && record.poLineId !== null && record.poLineId !== '') return items.filter(item => item.rowId === Number(record.poLineId));
   const refs = poReferences(record);

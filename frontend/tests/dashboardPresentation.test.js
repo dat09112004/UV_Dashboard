@@ -9,19 +9,17 @@ const receivables = ar.map(row => classifyDebt(row, DATA_AS_OF));
 const payables = ap.map(row => classifyDebt(row, DATA_AS_OF));
 const alerts = buildAlertQueue(orders, receivables, payables, { includeWarnings: true });
 
-test('CEO, Sale and Accountant get different primary workspaces without hiding shared modules', () => {
-  assert.equal(getRoleLayout('CEO').widgets[0][0], 'alerts');
-  assert.equal(getRoleLayout('Sale').widgets[0][0], 'progress');
-  assert.equal(getRoleLayout('Accountant').widgets[0][0], 'cash');
-  assert.equal(getRoleLayout('Sale').alertType, 'orders');
-  assert.equal(getRoleLayout('Accountant').alertType, 'finance');
-  for (const role of Object.values(ROLE_LAYOUTS)) {
-    const ids = role.widgets.map(([id]) => id);
-    assert.equal(new Set(ids).size, ids.length);
-    for (const module of ['alerts', 'orders', 'progress', 'revenue', 'receivables', 'payables']) assert.ok(ids.includes(module));
-    assert.ok(role.widgets.filter(([, , size]) => size === 'hero').every(([, span]) => span >= 5));
-    assert.equal(new Set(role.kpis).size, 4);
-  }
+test('CEO sees full company workspace while Sale and Accountant are strictly isolated to their own domains', () => {
+  const ceo = getRoleLayout('CEO');
+  const sale = getRoleLayout('Sale');
+  const accountant = getRoleLayout('Accountant');
+  assert.equal(ceo.alertType, 'all');
+  assert.equal(sale.alertType, 'orders');
+  assert.equal(accountant.alertType, 'finance');
+  assert.deepEqual(sale.kpis, ['orders']);
+  assert.deepEqual(accountant.kpis, ['receivables', 'payables', 'revenue']);
+  assert.ok(!accountant.widgets.some(([id]) => id === 'orders' || id === 'progress'));
+  assert.ok(!sale.widgets.some(([id]) => ['receivables', 'payables', 'revenue', 'cash'].includes(id)));
 });
 
 test('warnings are visible on demand while critical work stays first and unchanged', () => {

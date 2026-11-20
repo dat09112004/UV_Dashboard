@@ -5,6 +5,7 @@ import { CalendarDays, ChevronRight, PackageCheck } from 'lucide-react';
 import { formatDate } from '../../utils/dashboardMetrics.js';
 import { formatQuantity } from '../../utils/orderFulfillment.js';
 
+// Chức năng: Biểu đồ tròn (Donut) thống kê tiến độ hàng về kho và tiến độ sản xuất/đóng gói từ nhà cung cấp
 export default function ReceiptStatusChart({ analytics, reportDate, filter, onSelect, onOpenItem, compact }) {
   const { groups, total, schedule } = analytics;
   const chartRef = useChartEntrance();

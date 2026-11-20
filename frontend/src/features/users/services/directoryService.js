@@ -6,6 +6,7 @@ import {
   fetchTaskAttachmentApi,
 } from '../../../services/api.js';
 
+// Chức năng: Khởi tạo trạng thái rỗng ban đầu cho danh bạ tài khoản, công việc và nhắc việc
 export function createEmptyDirectoryState() {
   return {
     version: 1,
@@ -18,6 +19,7 @@ export function createEmptyDirectoryState() {
   };
 }
 
+// Chức năng: Chuẩn hóa hồ sơ tài khoản, ẩn mật khẩu và lọc danh sách tab điều hướng theo đúng vai trò (CEO không có tab Quản lý tài khoản 'users')
 function normalizeProfile(record, departmentNavigation) {
   const role = ROLE_PROFILES[record.role] || ROLE_PROFILES.Sale;
   const publicRecord = { ...record };
@@ -33,18 +35,25 @@ function normalizeProfile(record, departmentNavigation) {
   if (record.role === 'Accountant') {
     baseNav = baseNav.filter(sec => sec !== 'orders' && sec !== 'data-entry');
   }
+  if (record.role !== 'Admin') {
+    baseNav = baseNav.filter(sec => sec !== 'users');
+  }
+  const basePermissions = Array.isArray(publicRecord.permissions)
+    ? publicRecord.permissions
+    : role.permissions;
+  const filteredPermissions = record.role === 'Admin'
+    ? basePermissions
+    : basePermissions.filter(p => p !== 'users.manage');
   return {
     ...publicRecord,
-    permissions: publicRecord.permissions || role.permissions,
+    permissions: filteredPermissions,
     roleLabel: publicRecord.roleLabel || role.label,
     title: publicRecord.title || role.title,
     navigation: baseNav,
   };
 }
 
-/**
- * Chuyển đổi danh sách tài khoản nhận từ Backend API sang danh sách hồ sơ chuẩn.
- */
+// Chức năng: Chuyển đổi danh sách tài khoản nhận từ Backend API sang danh sách hồ sơ chuẩn hiển thị trên giao diện
 export function directoryProfiles(state) {
   if (!state) return [];
   const rawAccounts = Array.isArray(state.accounts)
@@ -53,18 +62,22 @@ export function directoryProfiles(state) {
   return rawAccounts.map(account => normalizeProfile(account, state.departmentNavigation));
 }
 
+// Chức năng: Trả về trạng thái danh bạ mặc định khi chưa nạp dữ liệu từ máy chủ
 export function readDirectory() {
   return createEmptyDirectoryState();
 }
 
+// Chức năng: Gọi API làm mới toàn bộ dữ liệu khởi tạo (bootstrap) gồm tài khoản, công việc và nhắc việc
 export async function refreshDirectoryFromApi() {
   return fetchBootstrapApi();
 }
 
+// Chức năng: Gửi thao tác cập nhật tài khoản, phân quyền hoặc công việc lên máy chủ Backend
 export async function saveDirectoryAction(_actorId, action, payload) {
   return executeDirectoryOrTaskActionApi(action, payload);
 }
 
+// Chức năng: Lọc và chuẩn bị dữ liệu không gian làm việc (công việc, nhắc việc, tệp đính kèm) theo quyền của người dùng hiện tại
 export function taskWorkspace(state, actor, users = directoryProfiles(state)) {
   if (!state) {
     return { tasks: [], fileNames: {}, reminders: [], allTasks: [] };
@@ -88,6 +101,7 @@ export function taskWorkspace(state, actor, users = directoryProfiles(state)) {
   return { tasks, fileNames, reminders, allTasks };
 }
 
+// Chức năng: Tải nội dung tệp đính kèm của một công việc từ máy chủ Backend
 export async function readTaskAttachment(_actorId, taskId, fileId) {
   return fetchTaskAttachmentApi(taskId, fileId);
 }

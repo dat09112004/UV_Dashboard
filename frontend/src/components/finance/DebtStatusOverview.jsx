@@ -17,6 +17,7 @@ const BUCKETS = [
   { id: 'unknown', label: 'Chưa xác định hạn', color: DEBT_COLORS.unknown },
 ];
 
+// Chức năng: Xử lý nghiệp vụ (suggestedAction - Action) phục vụ xử lý dữ liệu trong DebtStatusOverview.jsx
 function suggestedAction(row, debtType, role) {
   if (debtType === 'payables' && needsPayableSplit(row)) return 'Tách chứng từ và đối soát từng nhà cung cấp trước khi duyệt.';
   if (row.debtStatus === 'unknown') {
@@ -35,6 +36,7 @@ function suggestedAction(row, debtType, role) {
   return 'Kiểm tra hồ sơ để lập đề nghị chi.';
 }
 
+// Chức năng: Khung tổng quan công nợ (Phải thu AR / Phải trả AP): hiển thị biểu đồ phân bổ nợ quá hạn, đến hạn hôm nay và sắp tới hạn
 export default function DebtStatusOverview({
   rows, debtType, role, filter, onFilter, onOpen, redOnly, onClearRed, canSplit = true,
   tasks = [], accounts = [], reminders = [], onRemindAlert,
@@ -47,6 +49,7 @@ export default function DebtStatusOverview({
   const total = groups.reduce((sum, group) => sum + group.amount, 0);
   const attention = rows.filter(row => debtMatchesFilter(row, 'attention'));
   const isPayable = debtType === 'payables';
+  // Chức năng: Mở (openRow - Row) phục vụ xử lý dữ liệu trong DebtStatusOverview.jsx
   const openRow = row => {
     const action = isPayable && payableAction(row, role, canSplit);
     if (action?.type === 'SPLIT_AP' || (action?.type === 'REVIEW_AP' && row.debtStatus !== 'unknown')) {

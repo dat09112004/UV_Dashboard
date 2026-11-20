@@ -166,7 +166,7 @@ test('grouped AP cannot be submitted or approved, and verified split preserves b
  assert.throws(() => splitPayable(split, accountant, payload, items), /không còn đủ điều kiện/);
  const child = children[0];
  const submitted = submitPayable(split, accountant, { id: child.id, amount: 1, dueDate: today, note: 'QA' });
- const approved = reviewPayable(submitted, admin, { id: child.id, approve: true, note: 'QA' }, today);
+ const approved = reviewPayable(submitted, admin, { id: child.id, approve: true, expectedProposalVersion: 1, note: 'QA' }, today);
  const paid = recordPayablePayment(approved, accountant, { id: child.id, amount: 1, date: today, reference: 'QA-OUT-SPLIT' }, today);
  assert.equal(paid.payables.find(row => row.id === child.id).remaining, child.remaining - 1);
 });

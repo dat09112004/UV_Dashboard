@@ -18,18 +18,21 @@ export const ROLE_LAYOUTS = {
   },
   Sale: {
     label: 'Giao hàng & tiến độ sản xuất', alertType: 'orders',
-    kpis: ['orders', 'revenue', 'receivables', 'payables'],
-    widgets: [['progress', 7, 'hero'], ['alerts', 5, 'hero'], ['orders', 12, 'table'], ['revenue', 4, 'compact'], ['receivables', 4, 'compact'], ['payables', 4, 'compact']],
+    kpis: ['orders'],
+    widgets: [['progress', 7, 'hero'], ['alerts', 5, 'hero'], ['orders', 12, 'table']],
   },
   Accountant: {
     label: 'Thu hồi công nợ & thanh toán', alertType: 'finance',
-    kpis: ['receivables', 'payables', 'revenue', 'orders'],
-    widgets: [['cash', 7, 'hero'], ['alerts', 5, 'hero'], ['receivables', 6, 'compact'], ['payables', 6, 'compact'], ['revenue', 6, 'compact'], ['progress', 6, 'compact'], ['orders', 12, 'table']],
+    kpis: ['receivables', 'payables', 'revenue'],
+    widgets: [['cash', 7, 'hero'], ['alerts', 5, 'hero'], ['receivables', 6, 'compact'], ['payables', 6, 'compact'], ['revenue', 6, 'compact']],
   },
 };
+// Chức năng: Lấy (getRoleLayout - Role Layout) phục vụ xử lý dữ liệu trong dashboardPresentation.js
 export const getRoleLayout = role => ROLE_LAYOUTS[role] || ROLE_LAYOUTS.CEO;
+// Chức năng: Lấy (getSeverity - Severity) phục vụ xử lý dữ liệu trong dashboardPresentation.js
 export const getSeverity = rank => rank === 0 ? 'critical' : rank === 1 ? 'warning' : 'normal';
 
+// Chức năng: Chuẩn bị dữ liệu hiển thị cho (presentAlert - Alert) phục vụ xử lý dữ liệu trong dashboardPresentation.js
 export function presentAlert(alert, role) {
   const data = alert.data;
   const severity = getSeverity(data.priorityRank);
@@ -66,10 +69,12 @@ export function presentAlert(alert, role) {
     action, button: grouped && role === 'Accountant' ? 'Tách chứng từ' : !isAr && isExec && data.approvalState === 'Chờ CEO duyệt chi' ? grouped ? 'Yêu cầu tách hồ sơ' : 'Xem đề nghị duyệt chi' : isAr ? 'Mở khoản phải thu' : 'Mở khoản phải trả' };
 }
 
+// Chức năng: Định dạng (formatAlertReason - Alert Reason) phục vụ xử lý dữ liệu trong dashboardPresentation.js
 export function formatAlertReason(item) {
   return item?.alertLabel || item?.alertReason || item?.alertLevel || 'Đúng hạn';
 }
 
+// Chức năng: Chuẩn bị dữ liệu hiển thị cho (presentOrderStatus - Order Status) phục vụ xử lý dữ liệu trong dashboardPresentation.js
 export function presentOrderStatus(item, state) {
   if (item?.priorityRank === 0) {
     return { label: item.alertLabel || state?.label || 'Báo động đỏ', tone: 'critical' };

@@ -12,11 +12,13 @@ import ProgressivePaginationBar from '../common/ProgressivePaginationBar.jsx';
 
 const DeliveryStatusChart = lazy(() => import('./DeliveryStatusChart.jsx'));
 
+// Chức năng: Thành phần giao diện (React Component QuantityProgress) hiển thị và xử lý tương tác người dùng trong FulfillmentTable.jsx
 export function QuantityProgress({ label, quantity, percent, unit, tone = 'normal' }) {
   return <div className={`quantity-progress ${tone}`}><div className="quantity-progress-values"><strong>{formatQuantity(quantity)}{quantity !== null && unit && <small> {unit}</small>}</strong><b>{formatPercent(percent)}</b></div>
     {percent === null ? <div className="quantity-progress-unknown" aria-label={t(`${label}: chưa đủ dữ liệu tính tỷ lệ`)} /> : <div className="quantity-progress-track" role="progressbar" aria-label={t(label)} aria-valuenow={Math.min(100, percent)} aria-valuemin={0} aria-valuemax={100}><i style={{ width: `${Math.min(100, percent)}%` }} /></div>}</div>;
 }
 
+// Chức năng: Bảng danh sách theo dõi tiến độ đơn hàng (PO): hiển thị SL đặt, % về kho, % giao khách, lịch dự kiến và nút Chi tiết
 export default function FulfillmentTable({
   items, reportDate, onOpenItem, onViewAll, limit, onResetFilters,
   selectedFilter, onFilterChange, tasks = [], accounts = [], reminders = [], onRemindAlert,
@@ -28,6 +30,7 @@ export default function FulfillmentTable({
   const filter = chartFilter === 'all' ? activeFilter : 'all';
   const analytics = useMemo(() => deliveryAnalytics(items, reportDate), [items, reportDate]);
   const receipts = useMemo(() => receiptAnalytics(items, reportDate), [items, reportDate]);
+  // Chức năng: Xử lý nghiệp vụ (toggleFilter - Filter) phục vụ xử lý dữ liệu trong FulfillmentTable.jsx
   const toggleFilter = value => setFilter(value === activeFilter ? 'all' : value);
   const id = useId();
   const summary = useMemo(() => fulfillmentSummary(items, reportDate), [items, reportDate]);
@@ -85,20 +88,27 @@ export default function FulfillmentTable({
       const statusTone = delivery.item.priorityRank === 0 ? 'critical' : state.tone;
       const statusLabel = delivery.item.priorityRank === 0 ? delivery.item.alertLabel : state.label;
       const alertObj = { id: `order-${item.rowId}`, type: 'orders', reference: item.poId, label: item.vendorItemNo, status: item.alertLabel, data: item };
-      return <tr key={item.rowId} className={state.tone}><td><button className="order-cell" onClick={() => onOpenItem(item)}><strong>{item.poId}</strong><span>{t(item.vendorItemNo)}</span></button><span className="fulfillment-category">{item.category}{(item.onProcessPct != null || item.packagingPct != null) ? ` · SX: ${formatPercent(item.onProcessPct ?? 0)} · ĐG: ${formatPercent(item.packagingPct ?? 0)}` : ''}</span>{item.priorityRank === 0 && (
-        <>
-          <span className="source-risk-label">{t(item.alertLabel)}</span>
-          <AlertAssignmentLine
-            alertRef={{ id: alertObj.id, type: 'orders', reference: item.poId }}
-            tasks={tasks}
-            accounts={accounts}
-            reminders={reminders}
-            canRemind={Boolean(onRemindAlert)}
-            onRemind={() => onRemindAlert?.(alertObj)}
-            compact={true}
-          />
-        </>
-      )}</td>
+      const isSaleOwned = item.ownerType === 'sale_self_owned' || item.createdByRole === 'Sale';
+      return <tr key={item.rowId} className={state.tone}><td><button className="order-cell" onClick={() => onOpenItem(item)}><strong>{item.poId}</strong><span>{t(item.vendorItemNo)}</span></button><span className="fulfillment-category">{item.category}{(item.onProcessPct != null || item.packagingPct != null) ? ` · SX: ${formatPercent(item.onProcessPct ?? 0)} · ĐG: ${formatPercent(item.packagingPct ?? 0)}` : ''}</span>
+        {isSaleOwned && item.priorityRank !== 0 && (
+          <small className="block text-[11px] italic text-emerald-800 mt-0.5">
+            {t('Sale tạo & đảm nhận:')} {item.assignedSaleName || item.createdByName || 'Phòng Sale'}
+          </small>
+        )}
+        {item.priorityRank === 0 && (
+          <>
+            <span className="source-risk-label">{t(item.alertLabel)}</span>
+            <AlertAssignmentLine
+              alertRef={{ id: alertObj.id, type: 'orders', reference: item.poId, data: item }}
+              tasks={tasks}
+              accounts={accounts}
+              reminders={reminders}
+              canRemind={Boolean(onRemindAlert)}
+              onRemind={() => onRemindAlert?.(alertObj)}
+              compact={true}
+            />
+          </>
+        )}</td>
         <td className="ordered-quantity"><strong>{formatQuantity(state.orderedQty)}</strong><span>{t(item.unit || 'Chưa có ĐVT')}</span><small>PO: {formatDate(item.releasedPoDate)}</small>{item.totalValueVnd != null && <small>{formatMoney(item.totalValueVnd)}</small>}</td>
         <td><QuantityProgress label={t(`Hàng về ${item.poId}`)} quantity={state.receivedQty} percent={state.receivedPct} unit={item.unit} tone={inboundLate ? 'critical' : state.receivedPct === null ? 'neutral' : 'normal'} />{state.receivedQty === null && <small className="unconfirmed-label">{t("Chưa xác nhận nhập kho")}</small>}
           <small className={`remaining-quantity${inboundLate ? ' receipt-late' : ''}`}>{t(inboundLate ? (state.receivedQty === null ? `Quá hạn nhận hàng ${-receipt.daysUntilReceipt} ngày` : `Trễ về kho ${-receipt.daysUntilReceipt} ngày`) : inboundLabel)}{t(state.remainingReceipt > 0 && ` · Còn về ${formatQuantity(state.remainingReceipt)} ${item.unit}`)}</small></td>

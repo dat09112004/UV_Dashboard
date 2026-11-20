@@ -2,13 +2,18 @@
 export const canCreateOrAssignTask = (role) => ['CEO', 'Admin'].includes(role);
 export const canChangeOfficialDeadlineOrAssignee = canCreateOrAssignTask;
 export const canConfirmTaskCompletion = canCreateOrAssignTask;
+// Chức năng: Kiểm tra quyền (canSubmitTaskHandover - Submit Task Handover) phục vụ xử lý dữ liệu trong permissions.js
 export const canSubmitTaskHandover = (role) => ['Sale', 'Accountant'].includes(role);
+// Chức năng: Kiểm tra quyền (canProposeDeadlineChange - Propose Deadline Change) phục vụ xử lý dữ liệu trong permissions.js
 export const canProposeDeadlineChange = (role) => role === 'Sale';
 
 let clientIdentity = null;
+// Chức năng: Thiết lập (setClientIdentity - Client Identity) phục vụ xử lý dữ liệu trong permissions.js
 export const setClientIdentity = user => { clientIdentity = user; };
+// Chức năng: Lấy (getClientIdentity - Client Identity) phục vụ xử lý dữ liệu trong permissions.js
 export const getClientIdentity = () => clientIdentity;
 
+// Chức năng: Kiểm tra quyền (canSendTaskRequest - Send Task Request) phục vụ xử lý dữ liệu trong permissions.js
 export function canSendTaskRequest(role, method, url, data = {}) {
   const verb = (method || 'get').toLowerCase();
   if (['get', 'head', 'options'].includes(verb)) return true;

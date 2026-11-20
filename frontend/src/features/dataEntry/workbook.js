@@ -7,9 +7,11 @@ export const MAX_SINGLE_ENTRY_UNCOMPRESSED_BYTES = 24 * 1024 * 1024;
 export const MAX_WORKBOOK_ZIP_ENTRIES = 200;
 export const MAX_WORKBOOK_SHEETS = 20;
 
+// Chức năng: Chuẩn hóa (normalize - normalize) phục vụ xử lý dữ liệu trong workbook.js
 const normalize = value => String(value ?? '').normalize('NFD').replace(/\p{Diacritic}/gu, '')
   .toLowerCase().replace(/đ/g, 'd').replace(/[^a-z0-9]/g, '');
 
+// Chức năng: Xử lý nghiệp vụ (cellValue - Value) phục vụ xử lý dữ liệu trong workbook.js
 function cellValue(value) {
   if (value instanceof Date) return value.toISOString().slice(0, 10);
   if (typeof value === 'object' && value !== null) {
@@ -19,6 +21,7 @@ function cellValue(value) {
   return value ?? '';
 }
 
+// Chức năng: Chuẩn hóa (normalizeDate - Date) phục vụ xử lý dữ liệu trong workbook.js
 function normalizeDate(value, year, date1904) {
   if (value === '' || value === '—') return '';
   if (typeof value === 'number' && value >= (date1904 ? 0 : 61) && value < (date1904 ? 2957004 : 2958466)) {
@@ -44,7 +47,6 @@ export function inspectWorkbookZipArchive(arrayBuffer) {
     throw new Error('Không thể đọc tệp Excel.');
   }
   const view = new DataView(arrayBuffer);
-  // Kiểm tra chữ ký ZIP đầu tệp (PK\x03\x04)
   if (view.getUint32(0, true) !== 0x04034b50) {
     throw new Error('Tệp Excel không đúng định dạng .xlsx.');
   }
@@ -216,6 +218,7 @@ async function verifyWorkbookDecompressedQuota(arrayBuffer, entries = []) {
   }
 }
 
+// Chức năng: Mở (openEntryWorkbook - Entry Workbook) phục vụ xử lý dữ liệu trong workbook.js
 export async function openEntryWorkbook(file) {
   if (!file || !/\.xlsx$/i.test(file.name) || file.size > MAX_WORKBOOK_BYTES) throw new Error('Chọn tệp .xlsx tối đa 8 MB.');
   const buffer = await file.arrayBuffer();
@@ -232,6 +235,7 @@ export async function openEntryWorkbook(file) {
   return book;
 }
 
+// Chức năng: Đọc (readEntrySheet - Entry Sheet) phục vụ xử lý dữ liệu trong workbook.js
 export function readEntrySheet(worksheet, schema, maxRows, year = '') {
   if (!worksheet || worksheet.rowCount > maxRows + 30 || worksheet.columnCount > 100) {
     throw new Error(`Trang tính vượt giới hạn ${maxRows} dòng dữ liệu hoặc 100 cột.`);
@@ -258,7 +262,6 @@ export function readEntrySheet(worksheet, schema, maxRows, year = '') {
       if (cell.formula && (cell.result === undefined || cell.result?.error)) throw new Error(`Ô ${cell.address} chưa có kết quả công thức hợp lệ. Hãy tính lại hoặc dán giá trị.`);
       const isPercentage = ['onProcessPct', 'packagingPct'].includes(match.key);
       const percentFormat = isPercentage && cell.numFmt?.replace(/"[^"]*"|\\.|_.|\*./g, '').includes('%');
-      // F01 Fix: Giữ nguyên kiểu number cho ô số Excel (ví dụ 1.234) để không bị hiểu nhầm thành chuỗi hàng nghìn "1.234" -> 1234
       values[match.key] = match.type === 'date'
         ? normalizeDate(value, year, date1904)
         : typeof value === 'number' && percentFormat
@@ -267,7 +270,6 @@ export function readEntrySheet(worksheet, schema, maxRows, year = '') {
             ? Number(value.toPrecision(15))
             : String(value).trim();
     }
-    // X08 Fix: Không âm thầm bỏ qua dòng có dữ liệu nhưng bị để trống poId trong sheet PO Released
     if (Object.values(values).some(v => v !== '' && v !== null && v !== undefined)) rows.push({ line, values });
   }
   if (!rows.length || rows.length > maxRows) throw new Error(`Chọn bảng và nhập từ 1 đến ${maxRows} dòng.`);
@@ -277,23 +279,213 @@ export function readEntrySheet(worksheet, schema, maxRows, year = '') {
 export const entrySheetName = (schema, language = getLanguage()) =>
   language === 'en' ? translate(schema.label, language) : schema.name;
 
+// Chức năng: Mô tả định dạng kiểu dữ liệu và ví dụ mẫu cho từng cột trong Tệp mẫu Excel
+export function getColumnFormatMetadata(col, schemaId = 'orders') {
+  const requiredBySheet = {
+    orders: new Set(['poId', 'vendorItemNo', 'vendorNo', 'vendorName', 'category', 'releasedPoDate', 'unit', 'orderedQty']),
+    revenue: new Set(['docNo', 'poId', 'customerName', 'recordDate', 'dueDate', 'shippedQty', 'netRevenue', 'basis']),
+    receivables: new Set(['docNo', 'customerName', 'originalAmount']),
+    payables: new Set(['docNo', 'poId', 'originalAmount']),
+    receipts: new Set(['reference', 'date', 'amount']),
+    allocations: new Set(['entryReference', 'receiptReference', 'docNo', 'date', 'amount']),
+    payments: new Set(['reference', 'docNo', 'date', 'amount']),
+    tasks: new Set(['title', 'description', 'deadline']),
+  };
+  const isReq = requiredBySheet[schemaId]?.has(col.key) || false;
+  const reqText = isReq ? 'Bắt buộc (*)' : 'Tùy chọn';
+
+  if (col.type === 'date') {
+    return {
+      numFmt: 'yyyy-mm-dd',
+      typeLabel: 'Ngày tháng (YYYY-MM-DD hoặc DD/MM/YYYY)',
+      requiredLabel: reqText,
+      example: '2026-11-18',
+      note: `${col.label} (${reqText})\nKiểu: Ngày tháng (YYYY-MM-DD hoặc DD/MM/YYYY)\nVí dụ: 2026-11-18`,
+    };
+  }
+  if (col.format === 'money' || ['unitPriceVnd', 'netRevenue', 'originalAmount', 'amount', 'cashCollected', 'allocatedPaid', 'remaining', 'allocatedAmount'].includes(col.key)) {
+    return {
+      numFmt: '#,##0',
+      typeLabel: 'Số nguyên VND (không âm, tối đa 1.000 tỷ)',
+      requiredLabel: reqText,
+      example: 140000,
+      note: `${col.label} (${reqText})\nKiểu: Số nguyên VND\nVí dụ: 140000 hoặc 42000000`,
+    };
+  }
+  if (col.format === 'percent' || ['onProcessPct', 'packagingPct'].includes(col.key)) {
+    return {
+      numFmt: '0.0',
+      typeLabel: 'Tỷ lệ phần trăm (Số từ 0 đến 100)',
+      requiredLabel: reqText,
+      example: 80,
+      note: `${col.label} (${reqText})\nKiểu: Tỷ lệ % (0 - 100)\nVí dụ: 80`,
+    };
+  }
+  if (col.format === 'quantity' || col.type === 'number') {
+    return {
+      numFmt: '#,##0.###',
+      typeLabel: 'Số lượng (Số dương, tối đa 3 chữ số thập phân)',
+      requiredLabel: reqText,
+      example: 1000,
+      note: `${col.label} (${reqText})\nKiểu: Số lượng (> 0)\nVí dụ: 1000`,
+    };
+  }
+  if (col.type === 'boolean') {
+    return {
+      numFmt: '@',
+      typeLabel: 'Logic (Có / Không hoặc true / false)',
+      requiredLabel: reqText,
+      example: 'Có',
+      note: `${col.label} (${reqText})\nKiểu: Có / Không`,
+    };
+  }
+  const examples = {
+    poId: 'UV-55151 (Không trùng lặp)',
+    vendorItemNo: 'Quần tây xanh',
+    vendorNo: '15000',
+    vendorName: 'Nhật Long Anh',
+    category: 'Quần áo',
+    countryOfOrigin: 'VIETNAM',
+    unit: 'pcs',
+    changeReason: 'Nhập đơn hàng mới từ Excel',
+    docNo: 'HD-UV-55151-01',
+    customerName: 'Công ty CP Thời trang Á Châu',
+    basis: 'Nghiệm thu giao hàng đợt 1',
+    reference: 'PT-2026-001',
+    entryReference: 'PB-2026-001',
+    receiptReference: 'PT-2026-001',
+    title: 'Kiểm tra tiến độ đơn hàng',
+    description: 'Theo dõi lịch nhập kho và giao khách',
+    assigneeEmail: 'sale@uyenvu.vn',
+    department: 'Sale',
+  };
+  return {
+    numFmt: '@',
+    typeLabel: col.key === 'poId' ? 'Văn bản (Mã PO duy nhất, không được trùng)' : 'Văn bản (Text)',
+    requiredLabel: reqText,
+    example: examples[col.key] || 'Văn bản',
+    note: `${col.label} (${reqText})\nKiểu: ${col.key === 'poId' ? 'Mã PO duy nhất (không trùng lặp)' : 'Văn bản'}\nVí dụ: ${examples[col.key] || 'Nhập nội dung'}`,
+  };
+}
+
+// Chức năng: Tải xuống tệp Excel dữ liệu hoặc Tệp mẫu có định dạng đầy đủ kiểu dữ liệu (numFmt, DataValidation, ghi chú cột và bảng Hướng dẫn kiểu dữ liệu)
 export async function downloadEntryWorkbook(schema, columns, rows, language = getLanguage()) {
   const { default: ExcelJS } = await import('exceljs');
   const book = new ExcelJS.Workbook();
+  const isTemplate = !Array.isArray(rows) || rows.length === 0;
+  // Khi xuất tệp mẫu, luôn ẩn cột Mã dòng (rowId) để tránh lỗi trùng/sai rowId khi tải lên nối tiếp
+  const effectiveColumns = isTemplate
+    ? columns.filter(col => col && col.key !== 'rowId' && !col.hidden)
+    : columns;
+
   const name = entrySheetName(schema, language);
   const sheet = book.addWorksheet(name, { views: [{ state: 'frozen', ySplit: 1 }] });
-  sheet.columns = columns.map(col => ({ key: col.key, header: translate(col.label, language), width: col.type === 'text' ? 27 : 20 }));
+  sheet.columns = effectiveColumns.map(col => {
+    const meta = getColumnFormatMetadata(col, schema.id);
+    return {
+      key: col.key,
+      header: translate(col.label, language),
+      width: col.type === 'text' ? 28 : 22,
+      style: { numFmt: meta.numFmt },
+    };
+  });
+
   const localizedFields = new Set(['status', 'approvalState', 'department']);
-  sheet.addRows(rows.map(row => Object.fromEntries(columns.map(({ key }) => {
-    const rawVal = localizedFields.has(key) ? translate(row[key], language) ?? '' : row[key] ?? '';
-    const safeVal = typeof rawVal === 'string' && (/^[=+\-@]/.test(rawVal) || /^[\t\r\n]+[=+\-@]/.test(rawVal))
-      ? `'${rawVal}`
-      : rawVal;
-    return [key, safeVal];
-  }))));
+  if (!isTemplate) {
+    sheet.addRows(rows.map(row => Object.fromEntries(effectiveColumns.map(({ key }) => {
+      const rawVal = localizedFields.has(key) ? translate(row[key], language) ?? '' : row[key] ?? '';
+      const safeVal = typeof rawVal === 'string' && (/^[=+\-@]/.test(rawVal) || /^[\t\r\n]+[=+\-@]/.test(rawVal))
+        ? `'${rawVal}`
+        : rawVal;
+      return [key, safeVal];
+    }))));
+  } else {
+    // Định dạng đầy đủ kiểu dữ liệu và Data Validation trên 50 dòng đầu của Tệp mẫu để người dùng nhập chuẩn xác trên Excel
+    effectiveColumns.forEach((col, idx) => {
+      const colNumber = idx + 1;
+      const meta = getColumnFormatMetadata(col, schema.id);
+      const headerCell = sheet.getRow(1).getCell(colNumber);
+      headerCell.note = meta.note;
+
+      for (let r = 2; r <= 51; r += 1) {
+        const cell = sheet.getRow(r).getCell(colNumber);
+        cell.numFmt = meta.numFmt;
+        if (col.format === 'percent') {
+          cell.dataValidation = {
+            type: 'decimal',
+            operator: 'between',
+            allowBlank: true,
+            formulae: [0, 100],
+            showInputMessage: true,
+            promptTitle: col.label,
+            prompt: `${meta.typeLabel} (${meta.requiredLabel})`,
+            showErrorMessage: true,
+            errorTitle: 'Sai kiểu dữ liệu',
+            error: 'Tỷ lệ phần trăm phải nằm trong khoảng từ 0 đến 100.',
+          };
+        } else if (col.format === 'money') {
+          cell.dataValidation = {
+            type: 'whole',
+            operator: 'greaterThanOrEqual',
+            allowBlank: true,
+            formulae: [0],
+            showInputMessage: true,
+            promptTitle: col.label,
+            prompt: `${meta.typeLabel} (${meta.requiredLabel}). Ví dụ: ${meta.example}`,
+            showErrorMessage: true,
+            errorTitle: 'Sai kiểu dữ liệu tiền tệ',
+            error: 'Số tiền VND phải là số nguyên không âm.',
+          };
+        } else if (col.format === 'quantity' || col.type === 'number') {
+          cell.dataValidation = {
+            type: 'decimal',
+            operator: 'greaterThanOrEqual',
+            allowBlank: true,
+            formulae: [0],
+            showInputMessage: true,
+            promptTitle: col.label,
+            prompt: `${meta.typeLabel} (${meta.requiredLabel}). Ví dụ: ${meta.example}`,
+            showErrorMessage: true,
+            errorTitle: 'Sai kiểu dữ liệu số lượng',
+            error: 'Số lượng phải là số không âm.',
+          };
+        } else {
+          cell.dataValidation = {
+            type: 'custom',
+            allowBlank: true,
+            formulae: ['TRUE'],
+            showInputMessage: true,
+            promptTitle: col.label,
+            prompt: `${meta.typeLabel} (${meta.requiredLabel}). Ví dụ: ${meta.example}`,
+          };
+        }
+      }
+    });
+
+    // Bổ sung trang tính thứ 2: "Huong_dan_kieu_du_lieu" mô tả chi tiết kiểu dữ liệu, bắt buộc/tùy chọn và ví dụ cho từng cột
+    const guideSheet = book.addWorksheet('Huong_dan_kieu_du_lieu', { views: [{ state: 'frozen', ySplit: 1 }] });
+    guideSheet.columns = [
+      { key: 'colName', header: 'Tên cột trong Tệp mẫu', width: 28 },
+      { key: 'required', header: 'Bắt buộc / Tùy chọn', width: 22 },
+      { key: 'dataType', header: 'Định dạng kiểu dữ liệu chuẩn', width: 44 },
+      { key: 'example', header: 'Giá trị mẫu hợp lệ', width: 32 },
+    ];
+    guideSheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    guideSheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1558C9' } };
+    effectiveColumns.forEach(col => {
+      const meta = getColumnFormatMetadata(col, schema.id);
+      guideSheet.addRow({
+        colName: translate(col.label, language),
+        required: meta.requiredLabel,
+        dataType: meta.typeLabel,
+        example: String(meta.example),
+      });
+    });
+  }
+
   sheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
   sheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF142843' } };
-  sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: Math.max(1, rows.length + 1), column: columns.length } };
+  sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: Math.max(1, rows.length + 1), column: effectiveColumns.length } };
   const bytes = await book.xlsx.writeBuffer();
   const url = URL.createObjectURL(new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
   const anchor = document.createElement('a');

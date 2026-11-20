@@ -11,14 +11,18 @@ import { DEBT_COLORS } from '../../utils/chartColors.js';
 
 const tick = { fontSize: 12, fill: '#516478' };
 const tooltipStyle = { borderRadius: 12, border: '1px solid #cbd5e1', fontSize: 13, color: '#102a43', boxShadow: '0 12px 30px #102a4320' };
+// Chức năng: Xử lý nghiệp vụ (number - number) phục vụ xử lý dữ liệu trong DashboardCharts.jsx
 const number = value => new Intl.NumberFormat(locale(), { maximumFractionDigits: 2 }).format(value || 0);
+// Chức năng: Thành phần giao diện (React Component ChartLegend) hiển thị và xử lý tương tác người dùng trong DashboardCharts.jsx
 export const ChartLegend = ({ items }) => <div className="chart-legend">{items.map(([label, color]) => <span key={label}><i style={{ background: color }} />{t(label)}</span>)}</div>;
 
+// Chức năng: Thành phần giao diện (React Component IndustryTick) hiển thị và xử lý tương tác người dùng trong DashboardCharts.jsx
 function IndustryTick({ x, y, payload }) {
   const lines = payload.value === 'VW Ipin Touch Cable' ? ['VW Ipin', 'Touch Cable'] : [payload.value];
   return <text x={x} y={y + 11} textAnchor="middle" fill="#40566c" fontSize={11} fontWeight={550}>{lines.map((line, i) => <tspan key={line} x={x} dy={i ? 13 : 0}>{line}</tspan>)}</text>;
 }
 
+// Chức năng: Biểu đồ tiến độ thực hiện đơn hàng tổng hợp theo từng ngành hàng
 export function CategoryProgressChart({ stats }) {
   const id = useId().replaceAll(':', '');
   const chartRef = useChartEntrance();
@@ -57,6 +61,7 @@ const monthlyRevenueSeries = [
   ['Thực thu', SERIES_COLORS.collected, 'thucThu'],
 ];
 
+// Chức năng: Thành phần giao diện (React Component RevenueBar) hiển thị và xử lý tương tác người dùng trong DashboardCharts.jsx
 function RevenueBar({ parts, max }) {
   return <div className="revenue-bar-track" aria-hidden="true">
     {parts.filter(part => part.amount > 0).map(({ key, label, color, amount }) =>
@@ -67,6 +72,7 @@ function RevenueBar({ parts, max }) {
   </div>;
 }
 
+// Chức năng: Biểu đồ cột/đường đối chiếu Doanh thu ghi nhận và Tiền thực thu theo tháng hoặc theo ngành hàng
 export function RevenueChart({ stats, monthlyData, onOpen }) {
   const [mode, setMode] = useState('category');
   const chartRef = useChartEntrance();
@@ -107,6 +113,7 @@ export function RevenueChart({ stats, monthlyData, onOpen }) {
   </section>;
 }
 
+// Chức năng: Thành phần giao diện (React Component DebtChart) hiển thị và xử lý tương tác người dùng trong DashboardCharts.jsx
 export function DebtChart({ type, title, summary, onOpen }) {
   const chartRef = useChartEntrance();
   const groups = [
@@ -126,6 +133,7 @@ export function DebtChart({ type, title, summary, onOpen }) {
   </section>;
 }
 
+// Chức năng: Thành phần giao diện (React Component CashPriorityChart) hiển thị và xử lý tương tác người dùng trong DashboardCharts.jsx
 export function CashPriorityChart({ ar, ap, onNavigate }) {
   const chartRef = useChartEntrance();
   const data = [{ name: t('Phải thu'), overdue: ar.overdue / 1000000, today: ar.today / 1000000 }, { name: t('Phải trả'), overdue: ap.overdue / 1000000, today: ap.today / 1000000 }];
@@ -143,6 +151,7 @@ export function CashPriorityChart({ ar, ap, onNavigate }) {
   </section>;
 }
 
+// Chức năng: Bảng phân tích lợi nhuận gộp, giá vốn PO và nghĩa vụ thuế ước tính từ dữ liệu doanh thu
 export function RevenueTaxProfitabilityPanel({ revenueRecords = [], items = [] }) {
   const [periodMode, setPeriodMode] = useState('month');
   const [selectedPeriod, setSelectedPeriod] = useState('all');

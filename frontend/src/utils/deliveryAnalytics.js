@@ -16,6 +16,7 @@ export const DELIVERY_RISKS = [
   { id: 'warning', label: 'Cần theo dõi', color: '#526782' },
 ];
 
+// Chức năng: Xử lý nghiệp vụ (deliveryRow - Row) phục vụ xử lý dữ liệu trong deliveryAnalytics.js
 export function deliveryRow(item, reportDate) {
   const options = { includeReceiptRisk: false };
   const progress = classifyProgress(item, reportDate, options);
@@ -31,6 +32,7 @@ export function deliveryRow(item, reportDate) {
   return { item: progress, state, delivery, risk, reason: deadlineReason ? state.label : risk === 'warning' && state.tone === 'warning' && progress.priorityRank > 1 ? state.label : progress.alertLabel };
 }
 
+// Chức năng: Xử lý nghiệp vụ (deliveryAnalytics - Analytics) phục vụ xử lý dữ liệu trong deliveryAnalytics.js
 export function deliveryAnalytics(items, reportDate) {
   const rows = items.map(item => deliveryRow(item, reportDate));
   const groups = DELIVERY_GROUPS.map(group => ({ ...group, count: rows.filter(row => row.delivery === group.id).length }));
@@ -42,6 +44,7 @@ export function deliveryAnalytics(items, reportDate) {
   return { total: rows.length, rows, groups, risks, attention };
 }
 
+// Chức năng: Kiểm tra khớp (matchesDeliveryChart - Delivery Chart) phục vụ xử lý dữ liệu trong deliveryAnalytics.js
 export function matchesDeliveryChart(row, filter) {
   if (filter === 'all') return true;
   if (filter === 'risk:all') return row.risk !== 'normal';

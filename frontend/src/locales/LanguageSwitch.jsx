@@ -2,6 +2,7 @@ import React, { useSyncExternalStore } from 'react';
 import { Globe2 } from 'lucide-react';
 import { getLanguage, setLanguage, subscribeLanguage, t } from './i18n.js';
 
+// Chức năng: Nút chuyển đổi ngôn ngữ hiển thị tức thời giữa Tiếng Việt (VI) và Tiếng Anh (EN)
 export default function LanguageSwitch() {
   const language = useSyncExternalStore(subscribeLanguage, getLanguage, getLanguage);
   return (

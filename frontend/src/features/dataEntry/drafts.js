@@ -1,8 +1,11 @@
 const DRAFT_KEY_PREFIX = 'uv-entry-draft-v1:';
+// Chức năng: Xử lý nghiệp vụ (keyFor - For) phục vụ xử lý dữ liệu trong drafts.js
 const keyFor = actorId => `${DRAFT_KEY_PREFIX}${actorId}`;
 const temporaryDrafts = new Map();
+// Chức năng: Xử lý nghiệp vụ (entryDraftIsTemporary - Draft Is Temporary) phục vụ xử lý dữ liệu trong drafts.js
 export const entryDraftIsTemporary = actorId => temporaryDrafts.has(actorId);
 
+// Chức năng: Đọc (readEntryDraft - Entry Draft) phục vụ xử lý dữ liệu trong drafts.js
 export function readEntryDraft(actorId) {
   if (temporaryDrafts.has(actorId)) return temporaryDrafts.get(actorId);
   try {
@@ -14,6 +17,7 @@ export function readEntryDraft(actorId) {
   }
 }
 
+// Chức năng: Xử lý nghiệp vụ (storeEntryDraft - Entry Draft) phục vụ xử lý dữ liệu trong drafts.js
 export function storeEntryDraft(actorId, draft) {
   try {
     if (Object.keys(draft.sheets).length) globalThis.sessionStorage.setItem(keyFor(actorId), JSON.stringify(draft));

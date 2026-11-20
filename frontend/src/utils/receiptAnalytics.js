@@ -12,6 +12,7 @@ const GROUPS = [
   { id: 'unknown', label: 'Chưa đủ thông tin', color: '#64748b' },
 ];
 
+// Chức năng: Xử lý nghiệp vụ (receiptAnalytics - Analytics) phục vụ xử lý dữ liệu trong receiptAnalytics.js
 export function receiptAnalytics(items, reportDate) {
   const today = parseBusinessDate(reportDate);
   const rows = items.map(item => {
@@ -30,6 +31,7 @@ export function receiptAnalytics(items, reportDate) {
   return { rows, groups, schedule, total: rows.length };
 }
 
+// Chức năng: Kiểm tra khớp (matchesReceiptChart - Receipt Chart) phục vụ xử lý dữ liệu trong receiptAnalytics.js
 export function matchesReceiptChart(row, filter) {
   return filter === 'watch' ? row.deadline === 'late' || row.deadline === 'upcoming' : row.status === filter || row.deadline === filter;
 }

@@ -20,8 +20,10 @@ import {
 } from '../services/taskWorkflow.js';
 import AlertAssignmentLine from '../../../components/common/AlertAssignmentLine.jsx';
 import ProgressivePaginationBar from '../../../components/common/ProgressivePaginationBar.jsx';
+import FormWindowDialog from '../../../components/common/FormWindowDialog.jsx';
 
-function QuickAssignBox({ reminder, people, today, busy, onQuickAssign, onDismiss }) {
+// Chức năng: Thành phần giao diện (React Component QuickAssignBox) hiển thị và xử lý tương tác người dùng trong RemindersPage.jsx
+function QuickAssignBox({ reminder, people, today, busy, onQuickAssign, onDismiss, onClose }) {
   const [scope, setScope] = useState('person');
   const [assigneeId, setAssigneeId] = useState(() => {
     const defaultRole = reminder.alertType === 'orders' ? 'Sale' : 'Accountant';
@@ -34,6 +36,7 @@ function QuickAssignBox({ reminder, people, today, busy, onQuickAssign, onDismis
   const [requiresFile, setRequiresFile] = useState(false);
   const [localError, setLocalError] = useState('');
 
+  // Chức năng: Xử lý sự kiện (handleSubmit - Submit) phục vụ xử lý dữ liệu trong RemindersPage.jsx
   const handleSubmit = async event => {
     event.preventDefault();
     setLocalError('');
@@ -55,13 +58,13 @@ function QuickAssignBox({ reminder, people, today, busy, onQuickAssign, onDismis
   return (
     <form
       onSubmit={handleSubmit}
-      className="mt-3 p-3.5 rounded-xl bg-slate-50 border border-sky-200 space-y-3"
+      className="workflow-form space-y-4"
       aria-label={t('Giao việc nhanh từ nhắc việc')}
     >
       <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-200">
         <span className="inline-flex items-center gap-1.5 text-xs font-bold text-sky-900">
           <ClipboardPlus size={15} />
-          {t('Giao việc nhanh ngay tại nhắc việc')}
+          {t('Giao việc nhanh ngay tại nhắc việc')} · <b>{reminder.reference}</b>
         </span>
         <div className="inline-flex rounded-lg border border-slate-300 bg-white p-0.5 text-xs">
           <button
@@ -85,22 +88,28 @@ function QuickAssignBox({ reminder, people, today, busy, onQuickAssign, onDismis
         </div>
       </div>
 
+      <div className="p-3 rounded-lg bg-amber-50/70 border border-amber-200 text-xs text-slate-800 space-y-1">
+        <div>
+          <strong>{reminder.reference}</strong> · {t(reminder.subject)} ({t(reminder.issue)})
+        </div>
+        <div className="text-slate-700">“{t(reminder.message)}”</div>
+      </div>
+
       {localError && (
         <p className="text-xs font-semibold text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2" role="alert">
           {t(localError)}
         </p>
       )}
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+      <fieldset disabled={busy} className="item-form-grid">
         {scope === 'person' ? (
-          <label className="flex flex-col gap-1 font-semibold text-slate-700">
-            <span>{t('Nhân viên đảm nhận')} <span className="text-rose-600">*</span></span>
+          <label>
+            {t('Nhân viên đảm nhận')} <span className="required-mark" aria-hidden="true">*</span>
             <select
               value={assigneeId}
               onChange={e => setAssigneeId(e.target.value)}
               required
               disabled={busy}
-              className="h-9 rounded-lg border border-slate-300 bg-white px-2.5 text-slate-900 font-medium"
             >
               <option value="">{t('Chọn người phụ trách')}</option>
               {people.map(person => (
@@ -111,14 +120,13 @@ function QuickAssignBox({ reminder, people, today, busy, onQuickAssign, onDismis
             </select>
           </label>
         ) : (
-          <label className="flex flex-col gap-1 font-semibold text-slate-700">
-            <span>{t('Phòng ban đảm nhận')} <span className="text-rose-600">*</span></span>
+          <label>
+            {t('Phòng ban đảm nhận')} <span className="required-mark" aria-hidden="true">*</span>
             <select
               value={department}
               onChange={e => setDepartment(e.target.value)}
               required
               disabled={busy}
-              className="h-9 rounded-lg border border-slate-300 bg-white px-2.5 text-slate-900 font-medium"
             >
               {Object.entries(TASK_DEPARTMENTS).map(([roleKey, label]) => (
                 <option key={roleKey} value={roleKey}>
@@ -129,21 +137,8 @@ function QuickAssignBox({ reminder, people, today, busy, onQuickAssign, onDismis
           </label>
         )}
 
-        <label className="flex flex-col gap-1 font-semibold text-slate-700">
-          <span>{t('Tên công việc giao')} <span className="text-rose-600">*</span></span>
-          <input
-            type="text"
-            value={title}
-            onChange={e => setTitle(e.target.value)}
-            required
-            maxLength={160}
-            disabled={busy}
-            className="h-9 rounded-lg border border-slate-300 bg-white px-2.5 text-slate-900 font-medium"
-          />
-        </label>
-
-        <label className="flex flex-col gap-1 font-semibold text-slate-700">
-          <span>{t('Hạn hoàn thành')} <span className="text-rose-600">*</span></span>
+        <label>
+          {t('Hạn hoàn thành')} <span className="required-mark" aria-hidden="true">*</span>
           <input
             type="date"
             min={today}
@@ -151,58 +146,70 @@ function QuickAssignBox({ reminder, people, today, busy, onQuickAssign, onDismis
             onChange={e => setDeadline(e.target.value)}
             required
             disabled={busy}
-            className="h-9 rounded-lg border border-slate-300 bg-white px-2.5 text-slate-900 font-medium"
           />
         </label>
-      </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end text-xs">
-        <label className="sm:col-span-8 flex flex-col gap-1 font-semibold text-slate-700">
-          <span>{t('Ghi chú chỉ đạo (Note cho nhân viên / phòng ban)')}</span>
+        <label className="workflow-wide">
+          {t('Tên công việc giao')} <span className="required-mark" aria-hidden="true">*</span>
+          <input
+            type="text"
+            value={title}
+            onChange={e => setTitle(e.target.value)}
+            required
+            maxLength={160}
+            disabled={busy}
+          />
+        </label>
+
+        <label className="workflow-wide">
+          {t('Ghi chú chỉ đạo (Note cho nhân viên / phòng ban)')}
           <input
             type="text"
             value={managerNote}
             onChange={e => setManagerNote(e.target.value)}
             maxLength={500}
             disabled={busy}
-            placeholder={t('Nhập ghi chú, hướng dẫn xử lý nhanh cho nhân viên hoặc phòng ban…')}
-            className="h-9 rounded-lg border border-slate-300 bg-white px-2.5 text-slate-900 font-normal"
           />
         </label>
-        <div className="sm:col-span-4 flex flex-wrap items-center justify-end gap-2">
-          <label className="inline-flex items-center gap-1.5 text-xs text-slate-700 cursor-pointer mr-auto">
-            <input
-              type="checkbox"
-              checked={requiresFile}
-              onChange={e => setRequiresFile(e.target.checked)}
-              disabled={busy}
-            />
-            <span>{t('Cần tệp kết quả')}</span>
-          </label>
-          {reminder.status === REMINDER_PENDING && onDismiss && (
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => onDismiss(reminder.id, managerNote)}
-              className="px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 font-semibold cursor-pointer"
-            >
-              {t('Đánh dấu đã xử lý')}
-            </button>
-          )}
-          <button
-            type="submit"
+
+        <label className="workflow-wide task-file-required">
+          <input
+            type="checkbox"
+            checked={requiresFile}
+            onChange={e => setRequiresFile(e.target.checked)}
             disabled={busy}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-sky-700 hover:bg-sky-800 text-white font-bold shadow-2xs cursor-pointer"
+          />
+          <span>{t('Cần tệp kết quả')}</span>
+        </label>
+      </fieldset>
+
+      <div className="workflow-footer">
+        <button type="button" disabled={busy} onClick={onClose}>
+          {t('Hủy')}
+        </button>
+        {reminder.status === REMINDER_PENDING && onDismiss && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              onDismiss(reminder.id, managerNote);
+              onClose?.();
+            }}
+            className="row-detail-button"
           >
-            <ClipboardPlus size={14} />
-            <span>{t('Giao việc ngay')}</span>
+            {t('Đánh dấu đã xử lý')}
           </button>
-        </div>
+        )}
+        <button type="submit" disabled={busy} className="primary">
+          <ClipboardPlus size={14} />
+          <span>{t('Giao việc ngay')}</span>
+        </button>
       </div>
     </form>
   );
 }
 
+// Chức năng: Trang Quản lý Nhắc việc: tổng hợp cảnh báo đỏ từ Đơn hàng/Công nợ, gửi nhắc việc cho sếp và giao việc nhanh qua chế độ Cửa sổ (Modal Window) chuẩn responsive
 export default function RemindersPage({
   reminders = [],
   tasks = [],
@@ -243,6 +250,12 @@ export default function RemindersPage({
   const [formError, setFormError] = useState('');
   const [expandedQuickAssignId, setExpandedQuickAssignId] = useState(null);
 
+  const activeQuickReminder = useMemo(
+    () => reminders.find(r => r.id === expandedQuickAssignId) || null,
+    [reminders, expandedQuickAssignId]
+  );
+
+  // Chức năng: Xử lý sự kiện (handleSelectRedAlert - Select Red Alert) phục vụ xử lý dữ liệu trong RemindersPage.jsx
   const handleSelectRedAlert = alertId => {
     setSelectedAlertKey(alertId);
     const found = redAlerts.find(a => a.id === alertId);
@@ -254,6 +267,7 @@ export default function RemindersPage({
     }
   };
 
+  // Chức năng: Xử lý nghiệp vụ (submitReminder - Reminder) phục vụ xử lý dữ liệu trong RemindersPage.jsx
   const submitReminder = async event => {
     event.preventDefault();
     if (!canRemindBoss) return;
@@ -273,12 +287,14 @@ export default function RemindersPage({
     }
   };
 
+  // Chức năng: Xử lý sự kiện (handleQuickAssign - Quick Assign) phục vụ xử lý dữ liệu trong RemindersPage.jsx
   const handleQuickAssign = async (payload, reportError) => {
     const ok = await onAction('quick-assign-reminder', payload, reportError);
     if (ok) setExpandedQuickAssignId(null);
     return ok;
   };
 
+  // Chức năng: Xử lý sự kiện (handleDismiss - Dismiss) phục vụ xử lý dữ liệu trong RemindersPage.jsx
   const handleDismiss = async (reminderId, managerNote) => {
     await onAction('dismiss-reminder', { reminderId, managerNote });
   };
@@ -330,6 +346,7 @@ export default function RemindersPage({
   });
   const pagedReminders = pagination.visibleItems;
 
+  // Chức năng: Định dạng (formatTime - Time) phục vụ xử lý dữ liệu trong RemindersPage.jsx
   const formatTime = iso => {
     if (!iso) return '—';
     try {
@@ -343,6 +360,7 @@ export default function RemindersPage({
     }
   };
 
+  // Chức năng: Xử lý nghiệp vụ (typeLabel - Label) phục vụ xử lý dữ liệu trong RemindersPage.jsx
   const typeLabel = type => ({
     orders: 'Đơn hàng & Tiến độ',
     receivables: 'Công nợ phải thu',
@@ -358,18 +376,18 @@ export default function RemindersPage({
           <p className="text-xs text-slate-600 mt-1">
             {t(isExec
               ? 'Nhận nhắc việc từ nhân viên đối với các cảnh báo đỏ chưa xử lý và giao việc nhanh kèm ghi chú cho nhân viên hoặc phòng ban.'
-              : 'Gửi nhắc việc cho CEO và Admin khi có cảnh báo đỏ chưa được giao hoặc chưa xử lý để tránh bị bỏ sót.')}
+              : 'Gửi nhắc việc cho Ban Giám đốc khi có cảnh báo đỏ chưa được giao hoặc chưa xử lý để tránh bị bỏ sót.')}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {canRemindBoss && (
             <button
               type="button"
-              onClick={() => setShowCreateForm(open => !open)}
+              onClick={() => setShowCreateForm(true)}
               className="row-primary-button flex items-center gap-1.5"
             >
               <BellRing size={16} />
-              <span>{t(showCreateForm ? 'Đóng khung nhắc việc' : '+ Gửi nhắc việc cho Sếp')}</span>
+              <span>{t('+ Gửi nhắc việc cho Sếp')}</span>
             </button>
           )}
           {isExec && (
@@ -385,144 +403,142 @@ export default function RemindersPage({
         </div>
       </header>
 
-      {canRemindBoss && (showCreateForm || initialDraft) && (
-        <section className="analytics-card bg-amber-50/60 border border-amber-300 p-5 rounded-xl space-y-4">
-          <div className="flex items-center justify-between border-b border-amber-200 pb-3">
-            <div className="flex items-center gap-2">
-              <BellRing className="text-amber-700" size={20} />
-              <div>
-                <h2 className="text-base font-bold text-slate-900">{t('Gửi nhắc việc cho CEO & Admin')}</h2>
-                <p className="text-xs text-slate-600">
-                  {t('Chọn cảnh báo đỏ đang chờ xử lý hoặc nhập mã PO / chứng từ để nhắc các sếp phân công xử lý.')}
-                </p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => { setShowCreateForm(false); onClearDraft?.(); }}
-              className="text-xs font-semibold text-slate-600 hover:text-slate-900 cursor-pointer"
-            >
-              {t('Đóng')}
-            </button>
-          </div>
+      {/* Cửa sổ 1: Gửi nhắc việc cho Ban Giám đốc */}
+      <FormWindowDialog
+        open={Boolean(canRemindBoss && (showCreateForm || initialDraft))}
+        title="Gửi nhắc việc cho Ban Giám đốc"
+        subtitle="Nhắc việc & Điều phối Cảnh báo đỏ"
+        size="lg"
+        busy={busy}
+        onClose={() => { setShowCreateForm(false); onClearDraft?.(); }}
+      >
+        <form onSubmit={submitReminder} className="workflow-form space-y-4">
+          {formError && (
+            <p className="text-xs font-semibold text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2" role="alert">
+              {t(formError)}
+            </p>
+          )}
+          <fieldset disabled={busy} className="item-form-grid">
+            <label className="workflow-wide">
+              {t('Chọn nhanh từ danh sách Báo động đỏ')}
+              <select
+                value={selectedAlertKey}
+                onChange={e => handleSelectRedAlert(e.target.value)}
+              >
+                <option value="">{t('-- Chọn cảnh báo đỏ hoặc tự nhập bên dưới --')}</option>
+                {redAlerts.map(alert => {
+                  const info = resolveAlertAssignmentInfo(
+                    { id: alert.id, type: alert.type, reference: alert.reference },
+                    tasks,
+                    accounts,
+                    reminders,
+                    today
+                  );
+                  return (
+                    <option key={alert.id} value={alert.id}>
+                      [{typeLabel(alert.type)}] {alert.reference} — {alert.label} ({info.isAssigned ? `Đã giao: ${info.assigneesText}` : 'Chưa giao việc'})
+                    </option>
+                  );
+                })}
+              </select>
+            </label>
 
-          <form onSubmit={submitReminder} className="space-y-3 text-xs sm:text-sm">
-            {formError && (
-              <p className="text-xs font-semibold text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2" role="alert">
-                {t(formError)}
-              </p>
-            )}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <label className="flex flex-col gap-1 font-semibold text-slate-700">
-                <span>{t('Chọn nhanh từ danh sách Báo động đỏ')}</span>
-                <select
-                  value={selectedAlertKey}
-                  onChange={e => handleSelectRedAlert(e.target.value)}
-                  className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-slate-900"
-                >
-                  <option value="">{t('-- Chọn cảnh báo đỏ hoặc tự nhập bên cạnh --')}</option>
-                  {redAlerts.map(alert => {
-                    const info = resolveAlertAssignmentInfo(
-                      { id: alert.id, type: alert.type, reference: alert.reference },
-                      tasks,
-                      accounts,
-                      reminders,
-                      today
-                    );
-                    return (
-                      <option key={alert.id} value={alert.id}>
-                        [{typeLabel(alert.type)}] {alert.reference} — {alert.label} ({info.isAssigned ? `Đã giao: ${info.assigneesText}` : 'Chưa giao việc'})
-                      </option>
-                    );
-                  })}
-                </select>
-              </label>
+            <label>
+              {t('Phân hệ cảnh báo')} <span className="required-mark" aria-hidden="true">*</span>
+              <select
+                value={customType}
+                onChange={e => setCustomType(e.target.value)}
+              >
+                <option value="orders">{t('Đơn hàng & Tiến độ')}</option>
+                <option value="receivables">{t('Công nợ phải thu')}</option>
+                <option value="payables">{t('Công nợ phải trả')}</option>
+              </select>
+            </label>
 
-              <label className="flex flex-col gap-1 font-semibold text-slate-700">
-                <span>{t('Phân hệ cảnh báo')} <span className="text-rose-600">*</span></span>
-                <select
-                  value={customType}
-                  onChange={e => setCustomType(e.target.value)}
-                  className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-slate-900"
-                >
-                  <option value="orders">{t('Đơn hàng & Tiến độ')}</option>
-                  <option value="receivables">{t('Công nợ phải thu')}</option>
-                  <option value="payables">{t('Công nợ phải trả')}</option>
-                </select>
-              </label>
+            <label>
+              {t('Mã PO / Số chứng từ')} <span className="required-mark" aria-hidden="true">*</span>
+              <input
+                type="text"
+                value={customReference}
+                onChange={e => setCustomReference(e.target.value)}
+                required
+                maxLength={160}
+              />
+            </label>
 
-              <label className="flex flex-col gap-1 font-semibold text-slate-700">
-                <span>{t('Mã PO / Số chứng từ')} <span className="text-rose-600">*</span></span>
-                <input
-                  type="text"
-                  value={customReference}
-                  onChange={e => setCustomReference(e.target.value)}
-                  required
-                  maxLength={160}
-                  placeholder={t('Nhập mã PO hoặc số chứng từ')}
-                  className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-slate-900"
-                />
-              </label>
-            </div>
+            <label>
+              {t('Tên mặt hàng / Đối tác liên quan')}
+              <input
+                type="text"
+                value={customSubject}
+                onChange={e => setCustomSubject(e.target.value)}
+                maxLength={180}
+              />
+            </label>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <label className="flex flex-col gap-1 font-semibold text-slate-700">
-                <span>{t('Tên mặt hàng / Đối tác liên quan')}</span>
-                <input
-                  type="text"
-                  value={customSubject}
-                  onChange={e => setCustomSubject(e.target.value)}
-                  maxLength={180}
-                  placeholder={t('Ví dụ: Túi vải kích thước 22cm x 15cm')}
-                  className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-slate-900"
-                />
-              </label>
-              <label className="flex flex-col gap-1 font-semibold text-slate-700">
-                <span>{t('Tình trạng cảnh báo hiện tại')}</span>
-                <input
-                  type="text"
-                  value={customIssue}
-                  onChange={e => setCustomIssue(e.target.value)}
-                  maxLength={240}
-                  placeholder={t('Ví dụ: Quá hạn nhận hàng 1 ngày, chưa có người đảm nhận')}
-                  className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-slate-900"
-                />
-              </label>
-            </div>
+            <label>
+              {t('Tình trạng cảnh báo hiện tại')}
+              <input
+                type="text"
+                value={customIssue}
+                onChange={e => setCustomIssue(e.target.value)}
+                maxLength={240}
+              />
+            </label>
 
-            <label className="flex flex-col gap-1 font-semibold text-slate-700">
-              <span>{t('Nội dung nhắc việc gửi CEO & Admin')} <span className="text-rose-600">*</span></span>
+            <label className="workflow-wide">
+              {t('Nội dung nhắc việc gửi Ban Giám đốc')} <span className="required-mark" aria-hidden="true">*</span>
               <textarea
                 value={message}
                 onChange={e => setMessage(e.target.value)}
                 required
                 maxLength={1000}
                 rows={3}
-                placeholder={t('Nhập lời nhắn nhắc sếp giao việc hoặc chỉ đạo xử lý (ví dụ: Cảnh báo này đã báo đỏ nhưng chưa thấy phân công người phụ trách, nhờ sếp giao việc giúp)…')}
-                className="rounded-lg border border-slate-300 bg-white p-3 text-slate-900"
               />
             </label>
+          </fieldset>
 
-            <div className="flex justify-end gap-2 pt-2">
-              <button
-                type="button"
-                onClick={() => { setShowCreateForm(false); onClearDraft?.(); }}
-                className="px-4 py-2 rounded-lg border border-slate-300 bg-white text-slate-700 font-semibold cursor-pointer"
-              >
-                {t('Hủy')}
-              </button>
-              <button
-                type="submit"
-                disabled={busy}
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold cursor-pointer"
-              >
-                <Send size={15} />
-                <span>{t('Gửi nhắc việc ngay')}</span>
-              </button>
-            </div>
-          </form>
-        </section>
-      )}
+          <div className="workflow-footer">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => { setShowCreateForm(false); onClearDraft?.(); }}
+            >
+              {t('Hủy')}
+            </button>
+            <button
+              type="submit"
+              disabled={busy}
+              className="primary"
+            >
+              <Send size={15} />
+              <span>{t('Gửi nhắc việc ngay')}</span>
+            </button>
+          </div>
+        </form>
+      </FormWindowDialog>
+
+      {/* Cửa sổ 2: Giao việc nhanh ngay tại nhắc việc */}
+      <FormWindowDialog
+        open={Boolean(isExec && activeQuickReminder)}
+        title="Giao việc nhanh ngay tại nhắc việc"
+        subtitle={activeQuickReminder ? `${activeQuickReminder.reference} · ${activeQuickReminder.subject}` : ''}
+        size="lg"
+        busy={busy}
+        onClose={() => setExpandedQuickAssignId(null)}
+      >
+        {activeQuickReminder && (
+          <QuickAssignBox
+            reminder={activeQuickReminder}
+            people={people}
+            today={today}
+            busy={busy}
+            onQuickAssign={handleQuickAssign}
+            onDismiss={handleDismiss}
+            onClose={() => setExpandedQuickAssignId(null)}
+          />
+        )}
+      </FormWindowDialog>
 
       <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
         <button
@@ -542,7 +558,7 @@ export default function RemindersPage({
             statusFilter === REMINDER_PENDING ? 'bg-rose-700 text-white border-rose-700' : 'bg-rose-50/70 border-rose-200 text-rose-900 hover:bg-rose-100/70'
           }`}
         >
-          <span className="text-xs font-semibold">{t('Chờ CEO / Admin giao việc')}</span>
+          <span className="text-xs font-semibold">{t('Chờ Ban Giám đốc giao việc')}</span>
           <div className="text-2xl font-bold mt-1">{pendingCount}</div>
         </button>
         <button
@@ -566,7 +582,7 @@ export default function RemindersPage({
           <div>
             <h2 className="text-base font-bold text-slate-900 m-0">{t('Danh sách nhắc việc từ nhân viên & các bộ phận')}</h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              {t('Mọi vai trò đều theo dõi được trạng thái đã giao hay chưa. Admin và CEO có thể giao việc nhanh kèm ghi chú trực tiếp tại từng mục.')}
+              {t('Mọi vai trò đều theo dõi được trạng thái đã giao hay chưa. Ban Giám đốc có thể bấm Giao việc nhanh để mở cửa sổ phân công trực tiếp.')}
             </p>
           </div>
           <div className="management-toolbar">
@@ -576,7 +592,6 @@ export default function RemindersPage({
                 type="search"
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
-                placeholder={t('Tìm mã PO, chứng từ, người nhắc…')}
               />
             </label>
             <select
@@ -617,7 +632,6 @@ export default function RemindersPage({
               };
               const matchedAlert = alerts.find(alert => reminderMatchesAlert(reminder, alert));
               const isPending = reminder.status === REMINDER_PENDING;
-              const isQuickOpen = expandedQuickAssignId === reminder.id || (isExec && isPending && expandedQuickAssignId === null && pagedReminders[0]?.id === reminder.id);
 
               return (
                 <article
@@ -679,11 +693,11 @@ export default function RemindersPage({
                       {isExec && (
                         <button
                           type="button"
-                          onClick={() => setExpandedQuickAssignId(isQuickOpen ? '__closed__' : reminder.id)}
+                          onClick={() => setExpandedQuickAssignId(reminder.id)}
                           className="row-primary-button text-xs flex items-center gap-1"
                         >
                           <ClipboardPlus size={14} />
-                          <span>{t(isQuickOpen ? 'Thu gọn giao việc' : isPending ? 'Giao việc nhanh' : 'Giao thêm / Đổi phân công')}</span>
+                          <span>{t(isPending ? 'Giao việc nhanh' : 'Giao thêm / Đổi phân công')}</span>
                         </button>
                       )}
                     </div>
@@ -692,7 +706,7 @@ export default function RemindersPage({
                   <div className="mt-3 p-3 rounded-lg bg-amber-50/70 border border-amber-200/80 text-xs text-slate-800 space-y-1">
                     <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500">
                       <span>
-                        <strong className="text-slate-800">{reminder.senderName}</strong> ({t(reminder.senderRole)}) {t('đã nhắc việc')}
+                        <strong className="text-slate-800">{reminder.senderName === 'Quản trị Demo' ? t('Ban Giám đốc') : reminder.senderName}</strong> ({t(reminder.senderRole === 'Admin' || reminder.senderRole === 'Quản trị viên' ? 'Ban Giám đốc' : reminder.senderRole)}) {t('đã nhắc việc')}
                       </span>
                       <span>{formatTime(reminder.updatedAt || reminder.createdAt)}</span>
                     </div>
@@ -703,22 +717,11 @@ export default function RemindersPage({
                     <div className="mt-2 text-xs text-emerald-900 bg-emerald-50/80 border border-emerald-200 rounded-lg px-3 py-2 flex flex-wrap items-center justify-between gap-2">
                       <span>
                         <UserCheck size={13} className="inline mr-1" />
-                        <strong>{reminder.assignedByName}</strong> {t('đã giao cho')} <strong>{t(reminder.assignedTargetLabel)}</strong>
+                        <strong>{reminder.assignedByName === 'Quản trị Demo' ? t('Ban Giám đốc') : reminder.assignedByName}</strong> {t('đã giao cho')} <strong>{t(reminder.assignedTargetLabel)}</strong>
                         {reminder.managerNote && <> · <em className="italic">{t('Ghi chú:')} “{reminder.managerNote}”</em></>}
                       </span>
                       <span className="text-[11px] text-emerald-700">{formatTime(reminder.assignedAt)}</span>
                     </div>
-                  )}
-
-                  {isExec && isQuickOpen && (
-                    <QuickAssignBox
-                      reminder={reminder}
-                      people={people}
-                      today={today}
-                      busy={busy}
-                      onQuickAssign={handleQuickAssign}
-                      onDismiss={handleDismiss}
-                    />
                   )}
                 </article>
               );
@@ -770,7 +773,6 @@ export default function RemindersPage({
                       setCustomIssue(alert.status || 'Báo động đỏ cần xử lý');
                       setMessage(`Cảnh báo đỏ ${alert.reference} (${alert.status}) hiện ${info.isAssigned ? `đã giao cho ${info.assigneesText} nhưng chưa hoàn tất` : 'chưa có người đảm nhận'}. Nhờ sếp kiểm tra và giao việc xử lý.`);
                       setShowCreateForm(true);
-                      window.scrollTo({ top: 0, behavior: 'smooth' });
                     }}
                   />
                 </div>

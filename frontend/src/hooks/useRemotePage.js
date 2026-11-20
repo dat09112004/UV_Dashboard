@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { getSessionIdentityKey } from '../services/api.js';
 
+// Chức năng: Xây dựng (buildRemotePageRequestKey - Remote Page Request Key) phục vụ xử lý dữ liệu trong useRemotePage.js
 export function buildRemotePageRequestKey({
   params = {},
   page = 1,
@@ -15,6 +16,7 @@ export function buildRemotePageRequestKey({
   return JSON.stringify([identity, filterKey, page, revision, attempt, limit]);
 }
 
+// Chức năng: React Custom Hook (useRemotePage) quản lý trạng thái và tối ưu hiệu năng giao diện
 export function useRemotePage(load, params, enabled, revision, limit = 10, sessionScope = '') {
   const sessionKey = `${getSessionIdentityKey()}:${sessionScope || ''}`;
   const filterKey = JSON.stringify(params);
@@ -48,7 +50,7 @@ export function useRemotePage(load, params, enabled, revision, limit = 10, sessi
     }
   }, [enabled, sessionKey]);
 
-  const validResult = enabled && result?.requestKey === requestKey ? result.data : null;
+  const validResult = enabled && result && result.scopedFilterKey === scopedFilterKey ? result.data : null;
   const error = enabled && failure?.requestKey === requestKey ? failure.message : '';
 
   useEffect(() => {
@@ -57,7 +59,7 @@ export function useRemotePage(load, params, enabled, revision, limit = 10, sessi
     setFailure(previous => (previous?.requestKey === requestKey ? null : previous));
     load({ ...JSON.parse(filterKey), page, limit }, controller.signal)
       .then(data => {
-        if (!controller.signal.aborted) setResult({ requestKey, data });
+        if (!controller.signal.aborted) setResult({ requestKey, scopedFilterKey, data });
       })
       .catch(err => {
         if (controller.signal.aborted || err.name === 'AbortError') return;

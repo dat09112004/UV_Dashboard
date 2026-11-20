@@ -1,7 +1,8 @@
 import { locale } from '../locales/i18n.js';
-import { AP_REVIEW, AP_PENDING, AP_APPROVED, AP_RETURNED, needsPayableSplit } from './financeWorkflow.js';
+import { AP_REVIEW, AP_PENDING, AP_APPROVED, AP_RETURNED, needsPayableSplit, AR_OPEN, AR_PENDING, AR_APPROVED, AR_RETURNED } from './financeWorkflow.js';
 import { isExecutiveRole } from './roles.js';
 
+// Chức năng: Xử lý nghiệp vụ (payableAction - Action) phục vụ xử lý dữ liệu trong workspaceUi.js
 export function payableAction(row, role, canSplit = true) {
   if (!(row.originalAmount + (row.adjustment || 0) - row.allocatedPaid > 0)) return null;
   const grouped = needsPayableSplit(row);
@@ -11,10 +12,26 @@ export function payableAction(row, role, canSplit = true) {
   if (role !== 'Accountant' && !isExec) return null;
   if (grouped) return { type: 'SPLIT_AP', label: 'Tách chứng từ' };
   if ([AP_REVIEW, AP_RETURNED].includes(row.approvalState)) return { type: 'SUBMIT_AP', label: 'Lập đề nghị chi' };
-  if (row.approvalState === AP_APPROVED) return { type: 'PAY_AP', label: 'Ghi nhận đã chi' };
+  if (row.approvalState === AP_APPROVED) return { type: 'PAY_AP', label: 'Xác nhận đã chi trả' };
   return null;
 }
 
+
+// Chức năng: Xác định nút thao tác tiếp theo cho Công nợ phải thu (Lập đề nghị thu -> CEO xác nhận thu -> Xác nhận đã thu tiền)
+export function receivableAction(row, role) {
+  if (!row || !(Number(row.originalAmount || 0) + Number(row.adjustment || 0) - Number(row.allocatedPaid || 0) > 0)) {
+    return null;
+  }
+  const isExec = isExecutiveRole(role);
+  const state = row.collectionState || AR_OPEN;
+  if (isExec && state === AR_PENDING) return { type: 'REVIEW_AR', label: 'Xác nhận đề nghị thu' };
+  if (role !== 'Accountant' && !isExec) return null;
+  if (state === AR_APPROVED) return { type: 'CONFIRM_AR', label: 'Xác nhận đã thu tiền' };
+  if ([AR_OPEN, AR_RETURNED].includes(state)) return { type: 'SUBMIT_AR', label: 'Lập đề nghị thu' };
+  return null;
+}
+
+// Chức năng: Xử lý nghiệp vụ (alertDestination - Destination) phục vụ xử lý dữ liệu trong workspaceUi.js
 export function alertDestination(alert, role, canSplit = true) {
   if (alert.type === 'orders') return { type: 'ITEM_DETAIL', data: alert.data };
   if (alert.type === 'payables') {
@@ -24,6 +41,7 @@ export function alertDestination(alert, role, canSplit = true) {
   return { type: 'DEBT_DETAIL', debtType: alert.type, data: alert.data };
 }
 
+// Chức năng: Chuẩn hóa (normalizeAmountInput - Amount Input) phục vụ xử lý dữ liệu trong workspaceUi.js
 export function normalizeAmountInput(value) {
   if (value === null || value === undefined) return '';
   if (typeof value === 'number') {
@@ -38,6 +56,7 @@ export function normalizeAmountInput(value) {
   return null;
 }
 
+// Chức năng: Xử lý nghiệp vụ (amountInputError - Input Error) phục vụ xử lý dữ liệu trong workspaceUi.js
 export function amountInputError(value, max) {
   const normalized = normalizeAmountInput(value);
   if (normalized === null) return 'Nhập số tiền nguyên VND, ví dụ 25.000.000.';
@@ -48,6 +67,7 @@ export function amountInputError(value, max) {
   return '';
 }
 
+// Chức năng: Định dạng (formatQtyValue - Qty Value) phục vụ xử lý dữ liệu trong workspaceUi.js
 const formatQtyValue = value => value === null || value === undefined || !Number.isFinite(value)
   ? ''
   : new Intl.NumberFormat(locale(), { maximumFractionDigits: 3 }).format(value);
@@ -117,15 +137,18 @@ export function inspectQuantityInput(value, { allowZero = true, max, unit = '' }
   return { raw: text, normalized: String(num), value: num, formatted, warning, error };
 }
 
+// Chức năng: Chuẩn hóa (normalizeQuantityInput - Quantity Input) phục vụ xử lý dữ liệu trong workspaceUi.js
 export function normalizeQuantityInput(value) {
   const result = inspectQuantityInput(value);
   return result.normalized;
 }
 
+// Chức năng: Xử lý nghiệp vụ (quantityInputError - Input Error) phục vụ xử lý dữ liệu trong workspaceUi.js
 export function quantityInputError(value, options = {}) {
   return inspectQuantityInput(value, options).error;
 }
 
+// Chức năng: Tính toán (computeProjectedProgress - Projected Progress) phục vụ xử lý dữ liệu trong workspaceUi.js
 export function computeProjectedProgress(item, { mode = 'cumulative', nhapInput = '', deliveredInput = '', orderedInput } = {}) {
   const unit = item?.unit || '';
   const orderedInspect = orderedInput !== undefined && String(orderedInput).trim() !== ''
@@ -176,6 +199,7 @@ export function computeProjectedProgress(item, { mode = 'cumulative', nhapInput 
 
 const SECONDARY_NAV_IDS = new Set(['data-entry', 'users', 'tasks', 'assignments', 'reminders']);
 
+// Chức năng: Tách danh sách các mục trên thanh điều hướng thành nhóm hiển thị chính và menu thu gọn 'Thêm' khi màn hình hẹp
 export function splitNavigationItems(items, viewportWidth = 1440) {
   if (!Array.isArray(items) || items.length <= 5 || viewportWidth >= 1460) {
     return { primary: items || [], overflow: [] };
@@ -198,8 +222,10 @@ export function splitNavigationItems(items, viewportWidth = 1440) {
 
 const GUIDE_STORAGE_PREFIX = 'uv-page-guide-v1';
 const memoryGuideState = new Map();
+// Chức năng: Xử lý nghiệp vụ (guideKey - Key) phục vụ xử lý dữ liệu trong workspaceUi.js
 const guideKey = (userId, section) => `${GUIDE_STORAGE_PREFIX}:${userId || 'anon'}:${section || 'overview'}`;
 
+// Chức năng: Đọc (readPageGuideDismissed - Page Guide Dismissed) phục vụ xử lý dữ liệu trong workspaceUi.js
 export function readPageGuideDismissed(userId, section, storage = globalThis.localStorage) {
   const key = guideKey(userId, section);
   try {
@@ -209,6 +235,7 @@ export function readPageGuideDismissed(userId, section, storage = globalThis.loc
   return memoryGuideState.get(key) === true;
 }
 
+// Chức năng: Xử lý nghiệp vụ (storePageGuideDismissed - Page Guide Dismissed) phục vụ xử lý dữ liệu trong workspaceUi.js
 export function storePageGuideDismissed(userId, section, dismissed, storage = globalThis.localStorage) {
   const key = guideKey(userId, section);
   memoryGuideState.set(key, Boolean(dismissed));
@@ -223,6 +250,7 @@ export function storePageGuideDismissed(userId, section, dismissed, storage = gl
 
 const ALLOCATION_GUIDE_KEY = 'uv:allocation-guide-dismissed';
 
+// Chức năng: Kiểm tra trạng thái (isAllocationGuideDismissed - Allocation Guide Dismissed) phục vụ xử lý dữ liệu trong workspaceUi.js
 export function isAllocationGuideDismissed() {
   try {
     return globalThis.localStorage?.getItem?.(ALLOCATION_GUIDE_KEY) === 'true';
@@ -231,6 +259,7 @@ export function isAllocationGuideDismissed() {
   }
 }
 
+// Chức năng: Xử lý nghiệp vụ (storeAllocationGuideDismissed - Allocation Guide Dismissed) phục vụ xử lý dữ liệu trong workspaceUi.js
 export function storeAllocationGuideDismissed(dismissed) {
   try {
     if (dismissed) globalThis.localStorage?.setItem?.(ALLOCATION_GUIDE_KEY, 'true');

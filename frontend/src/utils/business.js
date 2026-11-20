@@ -1,5 +1,6 @@
 
 
+// Chức năng: Phân tích (parseBusinessDate - Business Date) phục vụ xử lý dữ liệu trong business.js
 export function parseBusinessDate(value) {
   if (typeof value !== 'string') return null;
   const vn = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(value);
@@ -11,11 +12,13 @@ export function parseBusinessDate(value) {
   return date.getUTCFullYear() === y && date.getUTCMonth() === m - 1 && date.getUTCDate() === d ? date : null;
 }
 
+// Chức năng: Định dạng (formatBusinessDate - Business Date) phục vụ xử lý dữ liệu trong business.js
 export function formatBusinessDate(value) {
   const date = parseBusinessDate(value);
   return date ? `${String(date.getUTCDate()).padStart(2, '0')}/${String(date.getUTCMonth() + 1).padStart(2, '0')}/${date.getUTCFullYear()}` : '—';
 }
 
+// Chức năng: Xử lý nghiệp vụ (dateInputValue - Input Value) phục vụ xử lý dữ liệu trong business.js
 export function dateInputValue(value) {
   return parseBusinessDate(value)?.toISOString().slice(0, 10) || '';
 }
@@ -26,22 +29,26 @@ const businessDateFormatter = new Intl.DateTimeFormat('en-CA', {
 
 export const businessToday = (now = new Date()) => { const p = Object.fromEntries(businessDateFormatter.formatToParts(now).map(x => [x.type, x.value])); return `${p.year}-${p.month}-${p.day}`; };
 
+// Chức năng: Xử lý nghiệp vụ (nowVN - VN) phục vụ xử lý dữ liệu trong business.js
 export function nowVN() {
   return new Intl.DateTimeFormat('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', dateStyle: 'short', timeStyle: 'short' }).format(new Date());
 }
 
+// Chức năng: Kiểm tra trạng thái (isTaskOverdue - Task Overdue) phục vụ xử lý dữ liệu trong business.js
 export function isTaskOverdue(task, reportDate = businessToday()) {
   const due = parseBusinessDate(task.deadline);
   const report = parseBusinessDate(reportDate);
   return task.status !== 'Hoàn tất' && Boolean(due && report && due < report);
 }
 
+// Chức năng: Kiểm tra quyền (canWorkOnTask - Work On Task) phục vụ xử lý dữ liệu trong business.js
 export function canWorkOnTask(user, task) {
   if (task?.assigneeId) return Boolean(user?.status === 'active' && user.id === task.assigneeId &&
     user.permissions?.includes('tasks.read'));
   return Boolean(user?.role === 'Sale' && task && task.assignee === `${user.name} (Sale)`);
 }
 
+// Chức năng: Xử lý nghiệp vụ (debtAtDate - At Date) phục vụ xử lý dữ liệu trong business.js
 export function debtAtDate(record, reportDate = businessToday()) {
   if (!record) throw new Error('Không tìm thấy chứng từ công nợ.');
   const report = parseBusinessDate(reportDate);
@@ -53,12 +60,14 @@ export function debtAtDate(record, reportDate = businessToday()) {
   return { ...record, remaining, overdueDays, agingBucket };
 }
 
+// Chức năng: Kiểm tra trạng thái (isDue - Due) phục vụ xử lý dữ liệu trong business.js
 export function isDue(record, reportDate) {
   const due = parseBusinessDate(record.dueDate);
   const report = parseBusinessDate(reportDate);
   return record.remaining > 0 && Boolean(due && report && due <= report);
 }
 
+// Chức năng: Xử lý nghiệp vụ (inRevenuePeriod - Revenue Period) phục vụ xử lý dữ liệu trong business.js
 export function inRevenuePeriod(record, period, anchor = businessToday()) {
   const date = parseBusinessDate(record.recordDate);
   if (!date || record.approvalStatus !== 'Đã duyệt') return false;
@@ -68,6 +77,7 @@ export function inRevenuePeriod(record, period, anchor = businessToday()) {
   return date.getUTCFullYear() === month.getUTCFullYear() && date.getUTCMonth() === month.getUTCMonth();
 }
 
+// Chức năng: Xử lý nghiệp vụ (ageSummary - Summary) phục vụ xử lý dữ liệu trong business.js
 export function ageSummary(records) {
   const groups = [
     ['Sắp đến hạn', 'bg-teal-600'], ['Đến hạn hôm nay', 'bg-amber-500'],
@@ -81,6 +91,7 @@ export function ageSummary(records) {
   });
 }
 
+// Chức năng: Xử lý (onTimeStats - Time Stats) phục vụ xử lý dữ liệu trong business.js
 export function onTimeStats(shipments, reportDate = businessToday()) {
   const report = parseBusinessDate(reportDate);
   const due = shipments.filter(s => parseBusinessDate(s.etd) && parseBusinessDate(s.etd) <= report);
@@ -92,6 +103,7 @@ export function onTimeStats(shipments, reportDate = businessToday()) {
   return { rate: due.length ? Math.round(onTime.length / due.length * 100) : null, sample: `${onTime.length}/${due.length} đợt đến hạn có lịch` };
 }
 
+// Chức năng: Cập nhật (updateTask - Task) phục vụ xử lý dữ liệu trong business.js
 export function updateTask(task, user, action, payload = {}, time = nowVN()) {
   if (!task) throw new Error('Không tìm thấy công việc.');
   const ceoAction = ['confirm', 'review', 'assign'].includes(action);
@@ -133,6 +145,7 @@ export function updateTask(task, user, action, payload = {}, time = nowVN()) {
   return { ...result, isOverdue: isTaskOverdue(result) };
 }
 
+// Chức năng: Kiểm tra tính hợp lệ của (validateProgress - Progress) phục vụ xử lý dữ liệu trong business.js
 export function validateProgress(po, values) {
   const qty = [values.productionQty, values.packagingQty, values.shippedQty];
   if (qty.some(n => !Number.isFinite(n) || n < 0 || n > po.effectiveQty)) throw new Error('Số lượng phải từ 0 đến số lượng đặt hiệu lực.');
@@ -156,6 +169,7 @@ export function validateProgress(po, values) {
   });
 }
 
+// Chức năng: Xử lý nghiệp vụ (allocatePayment - Payment) phục vụ xử lý dữ liệu trong business.js
 export function allocatePayment(payment, debt, rawAmount, date = businessToday()) {
   const amount = Number(rawAmount);
   if (!payment || !debt) throw new Error('Không tìm thấy giao dịch hoặc chứng từ.');

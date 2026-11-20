@@ -5,7 +5,8 @@ import { t, locale, getLanguage, subscribeLanguage, phrase, translate } from './
 import React, { lazy, Suspense, useState, useMemo, useEffect, useRef, useSyncExternalStore } from 'react';
 import {
   Search, CheckCircle2, ChevronRight, Eye, X, Lock, ArrowRight, Flame,
-  EyeOff, Maximize2, Minimize2, ArrowLeft, Download, RotateCcw, CalendarDays, AlertTriangle, ShieldCheck
+  EyeOff, Maximize2, Minimize2, ArrowLeft, Download, RotateCcw, CalendarDays, AlertTriangle, ShieldCheck,
+  Hand, Send, Check, Pencil, ArrowLeftRight, Bell,
 } from 'lucide-react';
 
 import { useDebouncedValue } from './hooks/useDebounce.js';
@@ -28,6 +29,10 @@ import {
   LOGOUT_BROADCAST_KEY,
   parseCrossTabLogoutPayload,
   SESSION_EXPIRED_EVENT,
+  claimDebtApi,
+  assignDebtApi,
+  requestTransferDebtApi,
+  respondTransferDebtApi,
 } from './services/api.js';
 import AppHeader, { NAV_ITEMS } from './components/layout/AppHeader.jsx';
 import DashboardOverview, { OverviewKpis, AttentionSummary, EmployeeAlertReminder } from './components/dashboard/DashboardOverview.jsx';
@@ -37,11 +42,14 @@ import { exportExcel } from './utils/exportExcel.js';
 import { dateInputValue, parseBusinessDate } from './utils/business.js';
 import FulfillmentTable from './components/orders/FulfillmentTable.jsx';
 import ItemDetailPanel from './components/orders/ItemDetailPanel.jsx';
+import { canActorEditOrder, canActorEditFinanceRecord } from './utils/ownershipAccess.js';
 import DebtStatusOverview from './components/finance/DebtStatusOverview.jsx';
 import DebtDetailPanel from './components/finance/DebtDetailPanel.jsx';
+import TransferDebtForm from './components/finance/TransferDebtForm.jsx';
+import IconActionButton from './components/common/IconActionButton.jsx';
 import { getRoleLayout, presentAlert } from './utils/dashboardPresentation.js';
-import { alertDestination, payableAction } from './utils/workspaceUi.js';
-import { InvoiceForm, ReceivableCrudForm, PayableCrudForm, ReceiptWorkspace, PayableForm, SplitPayableForm, FinanceHistory } from './components/finance/FinanceForms.jsx';
+import { alertDestination, payableAction, receivableAction } from './utils/workspaceUi.js';
+import { InvoiceForm, ReceivableCrudForm, PayableCrudForm, ReceiptWorkspace, PayableForm, ReceivableWorkflowForm, SplitPayableForm, FinanceHistory } from './components/finance/FinanceForms.jsx';
 import { initialFinanceState, unallocatedTotal, payableWorkflowStatus, itemFinancialSummary, businessToday, AP_REVIEW, AP_PENDING, AP_APPROVED, AP_RETURNED, AP_SPLIT_REQUIRED } from './utils/financeWorkflow.js';
 import { setClientIdentity } from './utils/permissions.js';
 import { loadTrackedItems, getFulfillment, formatPercent, matchesFulfillment } from './utils/orderFulfillment.js';
@@ -53,18 +61,23 @@ const BRAND_LOGO = '/logo.png';
 const EMPTY_LIST = Object.freeze([]);
 const LOCKED_ACCOUNT_MESSAGE = 'Tài khoản đã bị khóa. Vui lòng liên hệ quản trị viên để mở khóa.';
 const TERMS_REQUIRED_MESSAGE = 'Vui lòng tích chọn đồng ý Chính sách bảo mật và Điều khoản sử dụng trước khi đăng nhập.';
+// Chức năng: Kiểm tra khớp (matchesSearch - Search) phục vụ xử lý dữ liệu trong App.jsx
 const matchesSearch = (value, query) => typeof value === 'string' &&
   (value.toLowerCase().includes(query) || translate(value, 'en').toLowerCase().includes(query));
+// Chức năng: Tạo mới (createEmptyFinance - Empty Finance) phục vụ xử lý dữ liệu trong App.jsx
 const createEmptyFinance = () => initialFinanceState([], [], [], businessToday());
+// Chức năng: Xử lý nghiệp vụ (panelSection - Section) phục vụ xử lý dữ liệu trong App.jsx
 const panelSection = panel => ({
   ITEM_DETAIL: 'orders', RECORD_REV: 'revenue',
   ALLOCATE_AR: 'receivables', CREATE_AR: 'receivables', EDIT_AR: 'receivables',
   CREATE_AP: 'payables', EDIT_AP: 'payables',
   SPLIT_AP: 'payables', SUBMIT_AP: 'payables', REVIEW_AP: 'payables', PAY_AP: 'payables',
 })[panel.type] || panel.debtType;
+// Chức năng: Kiểm tra quyền (canOpenPanel - Open Panel) phục vụ xử lý dữ liệu trong App.jsx
 const canOpenPanel = (user, panel) => canOpenSection(user, panelSection(panel)) &&
   (!['RECORD_REV', 'SPLIT_AP'].includes(panel.type) || can(user, 'orders.read') || canOpenSection(user, 'orders'));
 
+// Chức năng: Định dạng (formatVnd - Vnd) phục vụ xử lý dữ liệu trong App.jsx
 const formatVnd = (val) => {
   if (val === null || val === undefined || val === '—') return '—';
   if (val === 0) return '0 VND';
@@ -135,8 +148,28 @@ export default function App() {
   const canManageArCrud = showReceivables && (can(currentUser, 'receivables.allocate') || can(currentUser, 'revenue.create'));
   const canManageApCrud = showPayables && (can(currentUser, 'payables.submit') || can(currentUser, 'payables.approve'));
   const fullReport = canReadOrdersData && showRevenue && showReceivables && showPayables;
-  const [selectedSection, setActiveSection] = useState('overview');
+  const [selectedSection, setActiveSection] = useState(() => {
+    try {
+      const fromHash = String(window.location.hash || '').replace(/^#\/?/, '').trim();
+      const fromStorage = window.sessionStorage?.getItem('uv_active_section') || '';
+      return fromHash || fromStorage || 'overview';
+    } catch {
+      return 'overview';
+    }
+  });
   const activeSection = canOpenSection(currentUser, selectedSection) ? selectedSection : homeSection(currentUser);
+
+  useEffect(() => {
+    if (!isAuthenticated || !currentUser || !activeSection) return;
+    try {
+      window.sessionStorage?.setItem('uv_active_section', activeSection);
+      if (window.location.hash !== `#${activeSection}`) {
+        window.history?.replaceState?.(null, '', `#${activeSection}`);
+      }
+    } catch {
+      // ignore storage/history errors
+    }
+  }, [isAuthenticated, currentUser, activeSection]);
   const reviewingResubmissions = activeSection === 'assignment-reviews';
   const [alertTaskDraft, setAlertTaskDraft] = useState(null);
   const [reminderDraft, setReminderDraft] = useState(null);
@@ -214,6 +247,7 @@ export default function App() {
   const [reportDate, setReportDate] = useState(() => businessToday());
   const [debtFilter, setDebtFilter] = useState('all');
   const [payableWorkflowFilter, setPayableWorkflowFilter] = useState('all');
+  const [onlyUnassignedDebt, setOnlyUnassignedDebt] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const exportAbortRef = useRef(null);
   useEffect(() => () => exportAbortRef.current?.abort(), [isAuthenticated, currentAccountId]);
@@ -244,7 +278,7 @@ export default function App() {
   const [ordersWarning, setOrdersWarning] = useState('');
   const [dataLoading, setDataLoading] = useState(false);
   const dataPanel = ['overview', 'orders', 'revenue', 'receivables', 'payables', 'data-entry', 'reminders'].includes(activeSection);
-  const loadOrders = canReadOrdersData && dataPanel;
+  const loadOrders = canReadOrdersData && (dataPanel || activeSection === 'assignments');
   const loadFinance = (showRevenue || showReceivables || showPayables) && dataPanel;
 
   // Mục 08 & QA12 Fix: Tách tải PO thành useEffect hoàn toàn độc lập với Finance;
@@ -372,10 +406,10 @@ export default function App() {
   const [workspacePanel, setWorkspacePanel] = useState(null);
   const orderDetailRequest = useRef(null);
   const workspaceDebt = workspacePanel?.data?.id
-    ? (workspacePanel.debtType === 'receivables' || ['ALLOCATE_AR', 'EDIT_AR'].includes(workspacePanel.type)
+    ? (workspacePanel.debtType === 'receivables' || ['ALLOCATE_AR', 'EDIT_AR', 'SUBMIT_AR', 'REVIEW_AR', 'CONFIRM_AR'].includes(workspacePanel.type)
       ? receivables : payables).find(row => row.id === workspacePanel.data.id)
     : null;
-  const needsDebtRecord = ['SPLIT_AP', 'SUBMIT_AP', 'REVIEW_AP', 'PAY_AP', 'EDIT_AR', 'EDIT_AP'].includes(workspacePanel?.type) ||
+  const needsDebtRecord = ['SPLIT_AP', 'SUBMIT_AP', 'REVIEW_AP', 'PAY_AP', 'EDIT_AR', 'SUBMIT_AR', 'REVIEW_AR', 'CONFIRM_AR', 'EDIT_AP'].includes(workspacePanel?.type) ||
     (workspacePanel?.type === 'ALLOCATE_AR' && workspacePanel.data?.id);
   const [isFullScreenPanel, setIsFullScreenPanel] = useState(false);
   useEffect(() => {
@@ -388,21 +422,25 @@ export default function App() {
   workspaceDirtyRef.current = workspaceDirty;
   const [showDiscardDialog, setShowDiscardDialog] = useState(false);
   const [workspaceError, setWorkspaceError] = useState('');
+  // Chức năng: Mở (openWorkspace - Workspace) phục vụ xử lý dữ liệu trong App.jsx
   const openWorkspace = panel => {
     if (!canOpenPanel(currentUser, panel)) return;
     orderDetailRequest.current?.abort();
     setWorkspaceDirty(false); setWorkspaceError(''); setShowDiscardDialog(false); setWorkspacePanel(panel);
   };
+  // Chức năng: Xử lý nghiệp vụ (requestCloseWorkspace - Close Workspace) phục vụ xử lý dữ liệu trong App.jsx
   const requestCloseWorkspace = () => {
     if (workspaceSavingRef.current) return;
     if (workspaceDirtyRef.current) setShowDiscardDialog(true);
     else setWorkspacePanel(null);
   };
+  // Chức năng: Mở (openWorkAlert - Work Alert) phục vụ xử lý dữ liệu trong App.jsx
   const openWorkAlert = alert => {
     const panel = alertDestination(alert, currentRole, canReadOrdersData);
     if (panel.type === 'ITEM_DETAIL') void openItem(panel.data);
     else openWorkspace(panel);
   };
+  // Chức năng: Đặt lại (resetFilters - Filters) phục vụ xử lý dữ liệu trong App.jsx
   const resetFilters = () => {
     setSelectedCategory('Tất cả ngành hàng'); setSelectedOrigin('Tất cả xuất xứ');
     setSearchQuery(''); setOnlyMyRoleRedAlerts(false); setDebtFilter('all'); setPayableWorkflowFilter('all'); setOrderFilter('all');
@@ -458,12 +496,14 @@ export default function App() {
   const [toast, setToast] = useState(null);
   const toastTimer = useRef(null);
   useEffect(() => () => clearTimeout(toastTimer.current), []);
+  // Chức năng: Xử lý nghiệp vụ (showToast - Toast) phục vụ xử lý dữ liệu trong App.jsx
   const showToast = (msg, type = 'info') => {
     clearTimeout(toastTimer.current);
     setToast({ msg, type });
     toastTimer.current = setTimeout(() => setToast(null), 6000);
   };
 
+  // Chức năng: Xử lý nghiệp vụ (reloadDirectory - Directory) phục vụ xử lý dữ liệu trong App.jsx
   const reloadDirectory = async () => {
     try {
       setDirectory(await refreshDirectoryFromApi());
@@ -475,6 +515,7 @@ export default function App() {
     }
   };
 
+  // Chức năng: Xử lý sự kiện (handleDirectoryAction - Directory Action) phục vụ xử lý dữ liệu trong App.jsx
   const handleDirectoryAction = async (action, payload, reportError) => {
     if (directorySaving.current || !currentUser) return false;
     directorySaving.current = true;
@@ -484,7 +525,7 @@ export default function App() {
       await reloadDirectory();
       setDataRevision(version => version + 1);
       showToast(
-        action === 'create-reminder' ? 'Đã gửi nhắc việc đến CEO và Admin.' :
+        action === 'create-reminder' ? 'Đã gửi nhắc việc đến Ban Giám đốc.' :
         action === 'quick-assign-reminder' ? 'Đã giao việc nhanh và cập nhật trạng thái cảnh báo đỏ.' :
         'Đã lưu thay đổi.'
       );
@@ -564,7 +605,7 @@ export default function App() {
 
   const classifiedItems = useMemo(() => canReadOrdersData ? vendorItems.map(row => classifyProgress(row, reportDate)) : [], [canReadOrdersData, vendorItems, reportDate]);
   const classifiedAr = useMemo(() => showReceivables ? receivables.map(row => classifyDebt(row, reportDate)) : [], [showReceivables, receivables, reportDate]);
-  const classifiedAp = useMemo(() => showPayables ? payables.map(row => classifyDebt(row, reportDate)) : [], [showPayables, payables, reportDate]);
+  const classifiedAp = useMemo(() => showPayables ? payables.map(row => classifyDebt(row, reportDate, { debtType: 'payables', orders: vendorItems })) : [], [showPayables, payables, reportDate, vendorItems]);
 
   const sortedVendorItems = useMemo(() => classifiedItems.filter(item => {
     const q = debouncedSearchQuery.trim().toLowerCase();
@@ -608,7 +649,12 @@ export default function App() {
     (row?.type?.startsWith('RECEIPT') || row?.type?.startsWith('RECEIVABLE')) ? showReceivables : row?.type?.startsWith('PAYABLE') && showPayables);
   const arSummary = useMemo(() => debtSummary(sortedReceivables), [sortedReceivables]);
   const apSummary = useMemo(() => debtSummary(sortedPayables), [sortedPayables]);
-  const alerts = useMemo(() => buildAlertQueue(sortedVendorItems, sortedReceivables, sortedPayables, { includeWarnings: true }), [sortedVendorItems, sortedReceivables, sortedPayables]);
+  const alerts = useMemo(() => buildAlertQueue(
+    showOrders && currentRole !== 'Accountant' ? sortedVendorItems : [],
+    showReceivables && currentRole !== 'Sale' ? sortedReceivables : [],
+    showPayables && currentRole !== 'Sale' ? sortedPayables : [],
+    { includeWarnings: true }
+  ), [showOrders, showReceivables, showPayables, currentRole, sortedVendorItems, sortedReceivables, sortedPayables]);
   const tableReceivables = sortedReceivables.filter(row => activeSection !== 'receivables' || debtMatchesFilter(row, debouncedDebtFilter));
   const payableScope = sortedPayables.filter(row => debouncedPayableWorkflowFilter === 'all' || payableWorkflowStatus(row) === debouncedPayableWorkflowFilter);
   const tablePayables = activeSection === 'payables' ? payableScope.filter(row => debtMatchesFilter(row, debouncedDebtFilter)) : sortedPayables;
@@ -634,6 +680,7 @@ export default function App() {
     filter: debouncedDebtFilter, workflow: debouncedPayableWorkflowFilter,
   }, isAuthenticated && activeSection === 'payables', dataRevision, 10, currentAccountId);
 
+  // Chức năng: Xử lý (onNavigate - Navigate) phục vụ xử lý dữ liệu trong App.jsx
   const onNavigate = (section, filter = 'all', query) => {
     if (entrySaving.current) {
       showToast('Đang lưu dữ liệu. Vui lòng chờ.');
@@ -651,16 +698,28 @@ export default function App() {
     if (filter === 'red' && section === 'orders') setOnlyMyRoleRedAlerts(true);
     window.scrollTo({ top: 0, behavior: 'instant' });
   };
+  // Chức năng: Xử lý nghiệp vụ (assignWorkAlert - Work Alert) phục vụ xử lý dữ liệu trong App.jsx
   const assignWorkAlert = alert => {
     if (!canAssignAlert || alert.data.priorityRank !== 0) return;
+    if (alert.type === 'orders' && (alert.data?.ownerType === 'sale_self_owned' || alert.data?.createdByRole === 'Sale')) {
+      showToast(`Đơn hàng ${alert.reference} do nhân viên Sale tạo và đã tự động nhận xử lý.`);
+      return;
+    }
+    if (['receivables', 'payables'].includes(alert.type) && (alert.data?.ownerType === 'accountant_self_owned' || alert.data?.createdByRole === 'Accountant')) {
+      showToast(`Chứng từ ${alert.reference} do nhân viên Kế toán tạo và đã tự động nhận xử lý.`);
+      return;
+    }
     const view = presentAlert(alert, currentRole);
     onNavigate('assignments');
     setAlertTaskDraft({
-      sourceAlert: { type: alert.type, id: alert.id, reference: alert.reference },
+      taskCategory: alert.type === 'orders' ? 'order' : 'external',
+      orderRowId: alert.type === 'orders' ? alert.data?.rowId : undefined,
+      sourceAlert: { type: alert.type, id: alert.id, reference: alert.reference, data: alert.data },
       title: phrase('Xử lý báo động đỏ §', alert.reference).slice(0, 160),
       description: [t(view.subject), t(view.issue), t(view.action)].join('\n').slice(0, 1000),
     });
   };
+  // Chức năng: Xử lý nghiệp vụ (remindWorkAlert - Work Alert) phục vụ xử lý dữ liệu trong App.jsx
   const remindWorkAlert = alert => {
     if (!alert || !canRemindBoss) return;
     const view = presentAlert(alert, currentRole);
@@ -671,7 +730,7 @@ export default function App() {
       reference: alert.reference,
       subject: view.subject || alert.label || alert.reference,
       issue: view.issue || alert.status || 'Báo động đỏ cần xử lý',
-      message: `Cảnh báo đỏ ${alert.reference} (${view.issue || alert.status}) đã cảnh báo nhưng chưa thấy xử lý xong. Nhờ CEO / Admin kiểm tra và giao việc cho bộ phận phụ trách.`,
+      message: `Cảnh báo đỏ ${alert.reference} (${view.issue || alert.status}) đã cảnh báo nhưng chưa thấy xử lý xong. Nhờ Ban Giám đốc kiểm tra và giao việc cho bộ phận phụ trách.`,
     });
     setActiveSection('reminders');
     window.scrollTo({ top: 0, behavior: 'instant' });
@@ -679,13 +738,18 @@ export default function App() {
   const canAssignAlert = canAssignTasks(currentUser) && canOpenSection(currentUser, 'assignments');
   const alertReminderType = getRoleLayout(currentRole).alertType;
   const reminderAlerts = useMemo(() => isTaskEmployee(currentUser)
-    ? buildAlertQueue(classifiedItems, classifiedAr, classifiedAp).filter(alert =>
+    ? buildAlertQueue(
+      showOrders && currentRole !== 'Accountant' ? classifiedItems : [],
+      showReceivables && currentRole !== 'Sale' ? classifiedAr : [],
+      showPayables && currentRole !== 'Sale' ? classifiedAp : []
+    ).filter(alert =>
       alertReminderType === 'finance' ? alert.type !== 'orders' : alert.type === alertReminderType)
     : [], [currentUser, alertReminderType, classifiedItems, classifiedAr, classifiedAp]);
   const showEmployeeReminders = showReminders && (activeSection === 'overview' ||
     (alertReminderType === 'orders' && activeSection === 'orders') ||
     (alertReminderType === 'finance' && ['receivables', 'payables'].includes(activeSection)));
   useEffect(() => () => orderDetailRequest.current?.abort(), [activeSection, isAuthenticated, reportDate]);
+  // Chức năng: Mở (openItem - Item) phục vụ xử lý dữ liệu trong App.jsx
   const openItem = async item => {
     orderDetailRequest.current?.abort();
     const controller = new AbortController();
@@ -700,6 +764,7 @@ export default function App() {
       if (!controller.signal.aborted) showToast(error.message, 'error');
     }
   };
+  // Chức năng: Xử lý sự kiện (handleExport - Export) phục vụ xử lý dữ liệu trong App.jsx
   const handleExport = async () => {
     if (isExporting || !fullReport) return;
     // Mục 07 Fix: Chặn xuất báo cáo khi danh sách PO đang tải dở
@@ -858,6 +923,7 @@ export default function App() {
     finally { if (exportAbortRef.current === exportController) exportAbortRef.current = null; setIsExporting(false); }
   };
 
+  // Chức năng: Xử lý sự kiện (handleSaveEntry - Save Entry) phục vụ xử lý dữ liệu trong App.jsx
   const handleSaveEntry = async (sheetId, rows) => {
     entrySaving.current = true;
     try {
@@ -884,7 +950,7 @@ export default function App() {
       const res = await updateOrderProgressApi(target.rowId, {
         ...values,
         reportDate,
-        expectedTrackingVersion: target.trackingVersion ?? null,
+        expectedTrackingVersion: target.trackingVersion ?? 1,
       });
       let updated = res?.item?.poId ? res.item : res?.poId ? res : null;
       if (!updated) {
@@ -907,6 +973,7 @@ export default function App() {
     finally { workspaceSavingRef.current = false; setIsSavingWorkspace(false); }
   };
 
+  // Chức năng: Xử lý sự kiện (handleFinanceAction - Finance Action) phục vụ xử lý dữ liệu trong App.jsx
   const handleFinanceAction = async (action, payload, close = true) => {
     if (workspaceSavingRef.current || !financeLoaded || dataLoading || dataError) return null;
     workspaceSavingRef.current = true;
@@ -953,6 +1020,85 @@ export default function App() {
     finally { workspaceSavingRef.current = false; setIsSavingWorkspace(false); }
   };
 
+  // Chức năng: Xử lý sự kiện (handleDeleteDebt - Delete Debt) phục vụ xử lý dữ liệu trong App.jsx
+  // Chức năng: Giải nén và đồng bộ ngay lập tức dữ liệu tài chính mới nhất sau mọi thao tác ghi (không cần F5)
+  const syncFinanceSnapshotImmediate = async (res, debtType, rowId) => {
+    let next =
+      res?.finance && isFinanceSnapshotPayload(res.finance)
+        ? res.finance
+        : isFinanceSnapshotPayload(res)
+          ? res
+          : null;
+    if (!next) {
+      const fetched = await fetchFinanceStateApi({}).catch(() => null);
+      if (isFinanceSnapshotPayload(fetched)) next = fetched;
+    }
+    if (next) {
+      setFinance(next);
+      const list = debtType === 'payables' ? next.payables : next.receivables;
+      const fresh = (list || []).find(item => item.id === rowId);
+      if (fresh) {
+        setWorkspacePanel(prev => prev && prev.data?.id === rowId ? { ...prev, data: fresh } : prev);
+      }
+    }
+    setDataRevision(v => v + 1);
+    return next;
+  };
+
+  // Chức năng: Kế toán nhận xử lý hồ sơ công nợ từ hàng chờ chung
+  const handleClaimDebt = async (debtType, row) => {
+    try {
+      const res = await claimDebtApi(debtType, row.id, finance?.revision);
+      await syncFinanceSnapshotImmediate(res, debtType, row.id);
+      showToast(`${t('Đã nhận xử lý hồ sơ')} ${row.docNo || row.id}.`, 'success');
+    } catch (err) {
+      showToast(err?.message || t('Không thể nhận xử lý hồ sơ này.'), 'error');
+    }
+  };
+
+  // Chức năng: CEO phân công hoặc chuyển người phụ trách hồ sơ công nợ
+  const handleAssignDebt = async (debtType, row, assigneeId) => {
+    try {
+      const res = await assignDebtApi(debtType, row.id, assigneeId, finance?.revision);
+      await syncFinanceSnapshotImmediate(res, debtType, row.id);
+      showToast(assigneeId ? `${t('Đã phân công phụ trách hồ sơ')} ${row.docNo || row.id}.` : `${t('Đã chuyển hồ sơ')} ${row.docNo || row.id} ${t('về hàng chờ chung.')}`, 'success');
+    } catch (err) {
+      showToast(err?.message || t('Không thể cập nhật người phụ trách.'), 'error');
+    }
+  };
+
+  // Chức năng: Gửi yêu cầu chuyển giao hồ sơ công nợ cho kế toán khác kèm lý do (đóng cửa sổ sạch và báo thành công ngay)
+  const handleRequestTransferDebt = async (debtType, row, { toUserId, reason }) => {
+    try {
+      const res = await requestTransferDebtApi(debtType, row.id, { toUserId, reason, expectedRevision: finance?.revision });
+      await syncFinanceSnapshotImmediate(res, debtType, row.id);
+      setWorkspaceDirty(false);
+      setShowDiscardDialog(false);
+      setWorkspacePanel(null);
+      showToast(`${t('Chuyển giao thành công: đã gửi yêu cầu chuyển hồ sơ')} ${row.docNo || row.id}. ${t('Đang chờ bên nhận xác nhận.')}`, 'success');
+      return true;
+    } catch (err) {
+      showToast(err?.message || t('Không thể gửi yêu cầu chuyển giao.'), 'error');
+      return false;
+    }
+  };
+
+  // Chức năng: Bên nhận xác nhận đồng ý hoặc từ chối nhận chuyển giao hồ sơ công nợ
+  const handleRespondTransferDebt = async (debtType, row, accept) => {
+    try {
+      const res = await respondTransferDebtApi(debtType, row.id, { accept, expectedRevision: finance?.revision });
+      await syncFinanceSnapshotImmediate(res, debtType, row.id);
+      showToast(
+        accept
+          ? `${t('Đã xác nhận nhận chuyển giao hồ sơ')} ${row.docNo || row.id}.`
+          : `${t('Đã từ chối nhận chuyển giao hồ sơ')} ${row.docNo || row.id}.`,
+        'success'
+      );
+    } catch (err) {
+      showToast(err?.message || t('Không thể phản hồi yêu cầu chuyển giao.'), 'error');
+    }
+  };
+
   const handleDeleteDebt = async (debtType, row) => {
     if (!row?.id || workspaceSavingRef.current) return;
     if (Number(row.allocatedPaid || 0) > 0) {
@@ -963,6 +1109,7 @@ export default function App() {
     await handleFinanceAction(action, { id: row.id }, true);
   };
 
+  // Chức năng: Hiển thị giao diện (renderPriorityBadge - Priority Badge) phục vụ xử lý dữ liệu trong App.jsx
   const renderPriorityBadge = (level) => {
     if (level === 'Báo động đỏ') {
       return (
@@ -1018,6 +1165,12 @@ export default function App() {
     setForgotPasswordSent(false);
     setWorkspacePanel(null);
     setActiveSection('overview');
+    try {
+      window.sessionStorage?.removeItem('uv_active_section');
+      if (window.location.hash) window.history?.replaceState?.(null, '', window.location.pathname + window.location.search);
+    } catch {
+      // ignore
+    }
     setToast(null);
     logoutApi().catch(() => {
       setLoginNotice(
@@ -1028,6 +1181,7 @@ export default function App() {
     });
   };
 
+  // Chức năng: Xử lý sự kiện (handlePasswordChanged - Password Changed) phục vụ xử lý dữ liệu trong App.jsx
   const handlePasswordChanged = () => {
     logout('Đã đổi mật khẩu. Vui lòng đăng nhập lại bằng mật khẩu mới.');
   };
@@ -1060,15 +1214,14 @@ export default function App() {
               <div>
                 <label htmlFor="login-email">Email</label>
                 <input id="login-email" name="email" type="email" required autoComplete="username"
-                  value={loginEmail} onChange={e => { setLoginEmail(e.target.value); setLoginError(''); }}
-                  placeholder={t("Nhập email công việc")} />
+                  value={loginEmail} onChange={e => { setLoginEmail(e.target.value); setLoginError(''); }} />
               </div>
               <div>
                 <label htmlFor="login-password">{t("Mật khẩu")}</label>
                 <div className="password-field">
                   <input id="login-password" name="password" type={showPassword ? 'text' : 'password'} required
                     autoComplete="current-password" value={loginPassword}
-                    onChange={e => { setLoginPassword(e.target.value); setLoginError(''); }} placeholder={t("Nhập mật khẩu")} />
+                    onChange={e => { setLoginPassword(e.target.value); setLoginError(''); }} />
                   <button type="button" onClick={() => setShowPassword(!showPassword)}
                     aria-label={t(showPassword ? 'Ẩn mật khẩu' : 'Hiện mật khẩu')} aria-pressed={showPassword}>
                     {showPassword ? <EyeOff size={19} /> : <Eye size={19} />}
@@ -1199,7 +1352,7 @@ export default function App() {
       </p>}
       <Suspense fallback={<main className="dashboard-workspace"><p role="status">{t('Đang tải dữ liệu…')}</p></main>}>
       {activeSection === 'data-entry' ? <main className="dashboard-workspace entry-page">
-        <DataEntryPage key={currentUser.id} actor={currentUser} data={{ items: vendorItems, finance, directory }} onSave={handleSaveEntry} />
+        <DataEntryPage key={currentUser.id} actor={currentUser} data={{ items: vendorItems, finance, directory }} tasks={allDirectoryTasks} accounts={accounts} onSave={handleSaveEntry} onDeliveryCreated={() => setDataRevision(v => v + 1)} />
       </main> : activeSection === 'reminders' ? <main className="dashboard-workspace management-workspace tasks-workspace">
         <RemindersPage
           reminders={allReminders}
@@ -1222,6 +1375,7 @@ export default function App() {
           <AccountsPage accounts={accounts} departmentNavigation={directory.departmentNavigation} actor={currentUser} onAction={handleDirectoryAction} busy={directoryBusy} />
         </> :
           <><TasksPage key={activeSection} {...taskWorkspace(directory, currentUser)}
+            orderItems={vendorItems} finance={finance}
             accounts={accounts} actor={currentUser} managing={activeSection !== 'tasks'}
             reReviewOnly={reviewingResubmissions} alertDraft={alertTaskDraft} onClearAlertDraft={() => setAlertTaskDraft(null)}
             onNavigate={onNavigate} onAction={handleDirectoryAction} busy={directoryBusy} /></>}
@@ -1229,20 +1383,22 @@ export default function App() {
         <div className="page-heading"><div><p className="page-eyebrow">UYEN VU INTERNATIONAL</p><h1>{t(activeSection === 'overview' ? 'Tổng quan điều hành' : NAV_ITEMS.find(item => item.id === activeSection)?.label)}</h1></div><div className="page-heading-actions"><label className="report-date">{t("Ngày theo dõi")}<span className="report-date-control"><span>{formatDate(reportDate)}</span><CalendarDays size={14} /><input lang={locale()} aria-label={t("Ngày theo dõi")} type="date" min={dateInputValue(finance.openingDate) || '2020-01-01'} value={reportDate} onChange={e => { if (parseBusinessDate(e.target.value) && e.target.value >= (dateInputValue(finance.openingDate) || '2020-01-01')) setReportDate(e.target.value); }} /></span></label>{fullReport && <button className="export-button" onClick={handleExport} disabled={isExporting}><Download size={16} />{t(isExporting ? 'Đang xuất…' : 'Xuất báo cáo')}</button>}</div></div>
         <p className="mt-2 text-xs text-slate-600">{t('Hệ thống Điều hành Uyen Vu International · Dữ liệu đồng bộ trực tiếp từ máy chủ PostgreSQL & Redis Cache.')}</p>
         
-        <AttentionSummary
-          activeSection={activeSection}
-          alerts={alerts}
-          role={currentRole}
-          onNavigate={onNavigate}
-          onOpenAlert={openWorkAlert}
-          canNavigate={section => canOpenSection(currentUser, section)}
-          onAssignAlert={canAssignAlert ? assignWorkAlert : undefined}
-          onRemindAlert={canRemindBoss ? remindWorkAlert : undefined}
-          tasks={allDirectoryTasks}
-          accounts={accounts}
-          reminders={allReminders}
-        />
-        {showEmployeeReminders && (
+        {activeSection === 'overview' && (
+          <AttentionSummary
+            activeSection={activeSection}
+            alerts={alerts}
+            role={currentRole}
+            onNavigate={onNavigate}
+            onOpenAlert={openWorkAlert}
+            canNavigate={section => canOpenSection(currentUser, section)}
+            onAssignAlert={canAssignAlert ? assignWorkAlert : undefined}
+            onRemindAlert={canRemindBoss ? remindWorkAlert : undefined}
+            tasks={allDirectoryTasks}
+            accounts={accounts}
+            reminders={allReminders}
+          />
+        )}
+        {activeSection === 'overview' && showEmployeeReminders && (
           <EmployeeAlertReminder
             alerts={reminderAlerts}
             role={currentRole}
@@ -1260,13 +1416,13 @@ export default function App() {
           <label htmlFor="origin-filter">{t("Xuất xứ")}<select id="origin-filter" value={selectedOrigin} onChange={e => setSelectedOrigin(e.target.value)}>
             <option value="Tất cả xuất xứ">{t("Tất cả xuất xứ")}</option>{[...new Set(classifiedItems.map(row => row.countryOfOrigin).filter(Boolean))].map(origin => <option key={origin}>{origin}</option>)}
           </select></label>
-          <label htmlFor="workspace-search" className="filter-search">{t("Tìm kiếm")}<span><Search size={16} /><input id="workspace-search" type="search" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder={t(activeSection === 'orders' ? 'Tìm PO, mã hàng, nhà cung cấp…' : activeSection === 'receivables' ? 'Tìm hóa đơn, khách hàng…' : activeSection === 'payables' ? 'Tìm chứng từ, nhà cung cấp…' : 'PO, mã hàng, chứng từ, đối tác…')} /></span></label>
+          <label htmlFor="workspace-search" className="filter-search">{t("Tìm kiếm")}<span><Search size={16} /><input id="workspace-search" type="search" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} /></span></label>
           <button className={onlyMyRoleRedAlerts ? 'red-filter active' : 'red-filter'} aria-pressed={onlyMyRoleRedAlerts} onClick={() => setOnlyMyRoleRedAlerts(!onlyMyRoleRedAlerts)}><Flame size={16} />{t("Báo động đỏ")}</button>
           <button className="reset-filters" title={t("Xóa bộ lọc")} aria-label={t("Xóa bộ lọc")} onClick={resetFilters}><RotateCcw size={17} /><span>{t("Xóa lọc")}</span></button>
         </section>
 
         {activeFilters.length > 0 && <div className="active-filters" aria-label={t("Bộ lọc đang áp dụng")}><span>{t("Đang lọc")}</span>{activeFilters.map(filter => <button key={filter.label} onClick={filter.clear} aria-label={phrase('Bỏ lọc §', t(filter.label))}>{t(filter.label)}<X size={13} /></button>)}</div>}
-        <OverviewKpis role={currentRole} items={sortedVendorItems} revenue={sortedRevenueRecords} ar={arSummary} ap={apSummary} onNavigate={onNavigate} canNavigate={section => canOpenSection(currentUser, section)} />
+        {activeSection === 'overview' && <OverviewKpis role={currentRole} items={sortedVendorItems} revenue={sortedRevenueRecords} ar={arSummary} ap={apSummary} onNavigate={onNavigate} canNavigate={section => canOpenSection(currentUser, section)} />}
         <div className="page-content" key={activeSection}>
         {['receivables', 'payables'].includes(activeSection) && <div className="debt-detail-filter"><span>{phrase('§ chứng từ', activeSection === 'receivables' ? arPagination.totalItems : apPagination.totalItems)}</span><label htmlFor="debt-status-filter">{t("Trạng thái")}<select id="debt-status-filter" value={debtFilter} onChange={e => setDebtFilter(e.target.value)}>
           <option value="all">{t("Tất cả công nợ")}</option><option value="due">{t("Đến hạn & quá hạn")}</option><option value="red">{t("Báo động đỏ")}</option><option value="today">{t("Đến hạn hôm nay")}</option><option value="overdue">{t("Quá hạn")}</option><option value="upcoming">{t("Chưa đến hạn")}</option><option value="near">{t("Sắp đến hạn (1–7 ngày)")}</option><option value="future">{t("Chưa tới hạn (>7 ngày)")}</option><option value="attention">{t("Cần xử lý")}</option><option value="unknown">{t("Chưa có hạn")}</option><option value="paid">{t("Đã tất toán")}</option>
@@ -1277,60 +1433,14 @@ export default function App() {
         {activeSection === 'orders' && <div className="order-view-tabs" aria-label={t("Chế độ tiến độ đơn hàng")}><button aria-pressed={orderView === 'fulfillment'} onClick={() => setOrderView('fulfillment')}>{t("Nhập & giao hàng")}</button><button aria-pressed={orderView === 'production'} onClick={() => setOrderView('production')}>{t("Sản xuất & đóng gói")}</button></div>}
         {activeSection === 'orders' && orderView === 'fulfillment' && <FulfillmentTable onResetFilters={resetFilters} items={sortedVendorItems} reportDate={reportDate} onOpenItem={openItem} selectedFilter={debouncedOrderFilter} onFilterChange={setOrderFilter} tasks={allDirectoryTasks} accounts={accounts} reminders={allReminders} onRemindAlert={canRemindBoss ? remindWorkAlert : undefined} />}
         {activeSection === 'orders' && orderView === 'production' && (
-          <section className="space-y-6">
-            <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-2xs space-y-5">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-200">
+          <section className="space-y-4">
+            <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-2xs space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-slate-200">
                 <div>
-                  <h2 className="text-lg font-bold text-slate-900 mt-1">{t("Tiến độ mã hàng & ngành hàng")}</h2>
+                  <h2 className="text-base font-bold text-slate-900 m-0">{t("Tiến độ mã hàng & ngành hàng")}</h2>
                 </div>
               </div>
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-center">
-                <div className="lg:col-span-5 min-w-0">
-                  <CategoryProgressChart stats={categoryStats} />
-
-                </div>
-
-                <div className="lg:col-span-7 grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  {categoryStats.map(cat => (
-                    <button type="button" aria-pressed={selectedCategory === cat.category}
-                      key={cat.category}
-                      onClick={() => setSelectedCategory(selectedCategory === cat.category ? 'Tất cả ngành hàng' : cat.category)}
-                      className={`text-left p-3.5 rounded-xl border transition cursor-pointer ${
-                        selectedCategory === cat.category
-                          ? 'bg-slate-900 text-white border-slate-900'
-                          : 'bg-slate-50/70 hover:bg-slate-100 border-slate-200 text-slate-800'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-bold truncate">{cat.category}</span>
-                        {cat.redCount > 0 && (
-                          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-600 text-white shrink-0">
-                            {cat.redCount}{t(" Đỏ")}</span>
-                        )}
-                      </div>
-                      <div className="mt-2 space-y-1 text-xs">
-                        <div className="flex justify-between">
-                          <span className="opacity-75">{t("Số dòng mã hàng:")}</span>
-                          <strong>{cat.totalItems}{t(" mã")}</strong>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="opacity-75">{t("TB Sản xuất / Đóng gói:")}</span>
-                          <strong>{formatPercent(cat.avgOnProcess)} / {formatPercent(cat.avgPackaging)}</strong>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="opacity-75">{t("Mã có hàng về:")}</span>
-                          <strong>{cat.receivedItems} / {cat.totalItems}{t(" mã")}</strong>
-                        </div>
-                        <div className="flex justify-between pt-1 border-t border-slate-200/40">
-                          <span className="opacity-75">{t("Doanh thu:")}</span>
-                          <strong>{formatVnd(cat.revenue)}</strong>
-                        </div>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="overflow-x-auto border border-slate-200 rounded-xl">
+              <div className="overflow-x-auto border border-slate-200 rounded-xl cockpit-table-viewport">
                 <table className="w-full text-left border-collapse text-xs">
                   <thead>
                     <tr className="bg-slate-100 text-slate-700 font-bold uppercase border-b border-slate-200 whitespace-nowrap">
@@ -1445,6 +1555,53 @@ export default function App() {
                 </table>
               </div>
               <ProgressivePaginationBar pagination={productionPagination} itemUnit="mã hàng" />
+              <details className="cockpit-analytics-drawer">
+                <summary className="cockpit-analytics-summary">{t("Biểu đồ Tiến độ & Thống kê theo Ngành hàng")}</summary>
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-center pt-3">
+                  <div className="lg:col-span-5 min-w-0">
+                    <CategoryProgressChart stats={categoryStats} />
+                  </div>
+                  <div className="lg:col-span-7 grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                    {categoryStats.map(cat => (
+                      <button type="button" aria-pressed={selectedCategory === cat.category}
+                        key={cat.category}
+                        onClick={() => setSelectedCategory(selectedCategory === cat.category ? 'Tất cả ngành hàng' : cat.category)}
+                        className={`text-left p-3 rounded-xl border transition cursor-pointer ${
+                          selectedCategory === cat.category
+                            ? 'bg-slate-900 text-white border-slate-900'
+                            : 'bg-slate-50/70 hover:bg-slate-100 border-slate-200 text-slate-800'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold truncate">{cat.category}</span>
+                          {cat.redCount > 0 && (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-600 text-white shrink-0">
+                              {cat.redCount}{t(" Đỏ")}</span>
+                          )}
+                        </div>
+                        <div className="mt-1.5 space-y-0.5 text-xs">
+                          <div className="flex justify-between">
+                            <span className="opacity-75">{t("Số dòng mã hàng:")}</span>
+                            <strong>{cat.totalItems}{t(" mã")}</strong>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="opacity-75">{t("TB Sản xuất / Đóng gói:")}</span>
+                            <strong>{formatPercent(cat.avgOnProcess)} / {formatPercent(cat.avgPackaging)}</strong>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="opacity-75">{t("Mã có hàng về:")}</span>
+                            <strong>{cat.receivedItems} / {cat.totalItems}{t(" mã")}</strong>
+                          </div>
+                          {showRevenue && <div className="flex justify-between pt-1 border-t border-slate-200/40">
+                            <span className="opacity-75">{t("Doanh thu:")}</span>
+                            <strong>{formatVnd(cat.revenue)}</strong>
+                          </div>}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </details>
             </div>
           </section>
         )}
@@ -1462,24 +1619,42 @@ export default function App() {
               </div>
             </div>
 
-            <RevenueChart stats={categoryStats} monthlyData={monthlyData} />
-            <RevenueTaxProfitabilityPanel revenueRecords={sortedRevenueRecords} items={sortedVendorItems} />
-            <div className="space-y-3">
-              <h3 className="text-base font-bold text-slate-900">{t("Chứng từ doanh thu")}</h3>
-              <div className="overflow-x-auto border border-slate-200 rounded-xl">
+            <div className="space-y-2.5">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="p-3 rounded-xl border border-slate-200 bg-slate-50">
+                  <div className="text-xs text-slate-500">{t("Tổng giá trị bán ra (Công nợ phải thu)")}</div>
+                  <div className="text-base font-bold text-slate-900 font-mono mt-0.5">{formatVnd(sortedRevenueRecords.reduce((acc, r) => acc + Number(r.netRevenue || 0), 0))}</div>
+                </div>
+                <div className="p-3 rounded-xl border border-slate-200 bg-slate-50">
+                  <div className="text-xs text-slate-500">{t("Tổng giá vốn / Công nợ phải trả (AP)")}</div>
+                  <div className="text-base font-bold text-slate-900 font-mono mt-0.5">{formatVnd(sortedPayables.reduce((acc, p) => acc + Number(p.originalAmount || 0) + Number(p.adjustment || 0), 0))}</div>
+                </div>
+                <div className="p-3 rounded-xl border border-blue-200 bg-blue-50/60">
+                  <div className="text-xs text-blue-800 font-semibold">{t("Doanh thu thực tế (Phải thu − Phải trả)")}</div>
+                  <div className={(sortedRevenueRecords.reduce((acc, r) => acc + Number(r.netRevenue || 0), 0) - sortedPayables.reduce((acc, p) => acc + Number(p.originalAmount || 0) + Number(p.adjustment || 0), 0)) >= 0 ? "text-base font-bold font-mono mt-0.5 text-emerald-700" : "text-base font-bold font-mono mt-0.5 text-rose-700"}>
+                    {formatVnd(sortedRevenueRecords.reduce((acc, r) => acc + Number(r.netRevenue || 0), 0) - sortedPayables.reduce((acc, p) => acc + Number(p.originalAmount || 0) + Number(p.adjustment || 0), 0))}
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-bold text-slate-900 m-0">{t("Chứng từ doanh thu")} ({revenuePagination.totalItems})</h3>
+              </div>
+              <div className="overflow-x-auto border border-slate-200 rounded-xl cockpit-table-viewport">
                 <table className="w-full min-w-[760px] text-left border-collapse text-sm revenue-data-table" aria-label={t("Chứng từ doanh thu")}>
                   <thead>
                     <tr className="bg-slate-100 text-slate-700 font-bold uppercase border-b border-slate-200">
                       <th className="py-3 px-3.5">{t("Mức độ")}</th>
                       <th className="py-3 px-3.5">{t("Chứng từ / Ngày")}</th>
                       <th className="py-3 px-3.5">{t("Khách hàng & Mã hàng")}</th>
-                      <th className="py-3 px-3.5 text-right">{t("Doanh thu ghi nhận")}</th>
+                      <th className="py-3 px-3.5 text-right">{t("Giá trị bán ra (AR)")}</th>
+                      <th className="py-3 px-3.5 text-right">{t("Vốn nhập (AP)")}</th>
+                      <th className="py-3 px-3.5 text-right">{t("Doanh thu thực tế")}</th>
                       <th className="py-3 px-3.5 text-right">{t("Đã thực thu")}</th>
                       <th className="py-3 px-3.5">{t("Đánh giá Kế toán")}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200">
-                    {!revenuePagination.loading && !revenuePagination.error && !revenuePagination.totalItems && <tr><td colSpan={6} className="empty-table">{t("Không có chứng từ doanh thu phù hợp")}</td></tr>}
+                    {!revenuePagination.loading && !revenuePagination.error && !revenuePagination.totalItems && <tr><td colSpan={8} className="empty-table">{t("Không có chứng từ doanh thu phù hợp")}</td></tr>}
                     {revenuePagination.visibleItems.map(rev => {
                       const isRed = rev.priorityRank === 0;
                       const alertObj = { id: `receivables-${rev.id}`, type: 'receivables', reference: rev.docNo, label: rev.customerName, status: rev.alertLevel, data: rev };
@@ -1493,9 +1668,14 @@ export default function App() {
                           <td className="py-3 px-3.5">
                             <div className="font-semibold text-slate-800 text-sm">{t(rev.customerName)}</div>
                             <div className="text-xs text-slate-500">{t(rev.sku)}</div>
+                            {(rev.ownerType === 'accountant_self_owned' || rev.createdByRole === 'Accountant') && (
+                              <div className="text-[11px] font-semibold text-emerald-800 mt-0.5">
+                                {t('Kế toán tạo & đảm nhận:')} {rev.assignedAccountantName || rev.createdByName || 'Phòng Kế toán'}
+                              </div>
+                            )}
                             {isRed && (
                               <AlertAssignmentLine
-                                alertRef={{ id: alertObj.id, type: 'receivables', reference: rev.docNo }}
+                                alertRef={{ id: alertObj.id, type: 'receivables', reference: rev.docNo, data: rev }}
                                 tasks={allDirectoryTasks}
                                 accounts={accounts}
                                 reminders={allReminders}
@@ -1507,6 +1687,12 @@ export default function App() {
                           </td>
                           <td className="py-3 px-3.5 text-right font-mono font-bold text-slate-900 text-sm whitespace-nowrap">
                             {formatVnd(rev.netRevenue)}
+                          </td>
+                          <td className="py-3 px-3.5 text-right font-mono text-slate-600 text-sm whitespace-nowrap">
+                            {formatVnd(rev.costOfGoodsVnd || 0)}
+                          </td>
+                          <td className={(rev.actualRevenueVnd ?? (Number(rev.netRevenue || 0) - Number(rev.costOfGoodsVnd || 0))) >= 0 ? "py-3 px-3.5 text-right font-mono font-bold text-sm whitespace-nowrap text-emerald-700" : "py-3 px-3.5 text-right font-mono font-bold text-sm whitespace-nowrap text-rose-700"}>
+                            {formatVnd(rev.actualRevenueVnd ?? (Number(rev.netRevenue || 0) - Number(rev.costOfGoodsVnd || 0)))}
                           </td>
                           <td className="py-3 px-3.5 text-right font-mono font-semibold text-slate-700 text-sm whitespace-nowrap">
                             {formatVnd(rev.cashCollected)}
@@ -1522,6 +1708,13 @@ export default function App() {
               </div>
               <ProgressivePaginationBar pagination={revenuePagination} itemUnit="chứng từ doanh thu" />
             </div>
+            <details className="cockpit-analytics-drawer">
+              <summary className="cockpit-analytics-summary">{t("Biểu đồ Doanh thu, Thuế & Lợi nhuận theo Ngành hàng")}</summary>
+              <div className="space-y-4 pt-3">
+                <RevenueChart stats={categoryStats} monthlyData={monthlyData} />
+                <RevenueTaxProfitabilityPanel revenueRecords={sortedRevenueRecords} items={sortedVendorItems} />
+              </div>
+            </details>
           </section>
         )}
         {activeSection === 'receivables' && (
@@ -1533,6 +1726,12 @@ export default function App() {
               <div className="flex items-center gap-3">
                 <span className="text-xs text-slate-600">{t("Tiền thu chưa phân bổ giữ riêng: ")}<strong className="text-slate-900">{formatVnd(unallocatedCash)}</strong>
                 </span>
+                <button
+                  type="button"
+                  aria-pressed={onlyUnassignedDebt}
+                  onClick={() => setOnlyUnassignedDebt(v => !v)}
+                  className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold border cursor-pointer ${onlyUnassignedDebt ? 'bg-amber-600 text-white border-amber-600' : 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'}`}
+                >{t("Chưa có người nhận")} ({sortedReceivables.filter(r => canActorEditFinanceRecord(currentUser, r, 'receivables', allDirectoryTasks, accounts).unassigned).length})</button>
                 {canManageArCrud && <button
                   type="button"
                   onClick={() => openWorkspace({ type: 'CREATE_AR', debtType: 'receivables', data: null })}
@@ -1545,11 +1744,14 @@ export default function App() {
               </div>
             </div>
 
-            <DebtStatusOverview rows={sortedReceivables} debtType="receivables" role={currentRole}
-              filter={debouncedDebtFilter} onFilter={setDebtFilter} onOpen={openWorkspace}
-              redOnly={onlyMyRoleRedAlerts} onClearRed={() => { setOnlyMyRoleRedAlerts(false); setDebtFilter('all'); }}
-              tasks={allDirectoryTasks} accounts={accounts} reminders={allReminders} onRemindAlert={canRemindBoss ? remindWorkAlert : undefined} />
-            <div className="overflow-x-auto border border-slate-200 rounded-xl">
+            <div className="role-compact-grid">
+              <div className="role-compact-tile"><span>{t('Tổng còn phải thu')}</span><strong>{formatVnd(arSummary.total)}</strong></div>
+              <div className="role-compact-tile"><span>{t('Quá hạn & đến hạn')}</span><strong className="text-rose-700">{formatVnd(arSummary.due)}</strong></div>
+              <div className="role-compact-tile"><span>{t('Tiền thu chưa phân bổ')}</span><strong>{formatVnd(unallocatedCash)}</strong></div>
+              <div className="role-compact-tile"><span>{t('Chờ tiếp nhận / Chuyển giao')}</span><strong className="text-amber-700">{sortedReceivables.filter(r => canActorEditFinanceRecord(currentUser, r, 'receivables', allDirectoryTasks, accounts).unassigned || r.pendingTransfer?.toUserId === currentUser?.id).length} {t('hồ sơ')}</strong></div>
+            </div>
+
+            <div className="overflow-x-auto border border-slate-200 rounded-xl cockpit-table-viewport">
               <table className="w-full text-left border-collapse text-xs sm:text-sm">
                 <thead>
                   <tr className="bg-slate-100 text-slate-700 font-bold uppercase text-xs border-b border-slate-200">
@@ -1566,9 +1768,11 @@ export default function App() {
                 </thead>
                 <tbody className="divide-y divide-slate-200">
                   {!arPagination.loading && !arPagination.error && !arPagination.totalItems && <tr><td colSpan={10} className="empty-table">{t("Không có khoản phải thu phù hợp. ")}<button onClick={resetFilters}>{t("Xóa bộ lọc")}</button></td></tr>}
-                  {arPagination.visibleItems.map(ar => {
+                  {arPagination.visibleItems.filter(ar => !onlyUnassignedDebt || canActorEditFinanceRecord(currentUser, ar, 'receivables', allDirectoryTasks, accounts).unassigned).map(ar => {
                     const isRed = ar.priorityRank === 0;
                     const alertObj = { id: `receivables-${ar.id}`, type: 'receivables', reference: ar.docNo, label: ar.customerName, status: ar.alertLabel, data: ar };
+                    const arAccess = canActorEditFinanceRecord(currentUser, ar, 'receivables', allDirectoryTasks, accounts);
+                    const arAction = arAccess.allowed ? receivableAction(ar, currentRole) : null;
                     return (
                       <tr key={ar.id} className={isRed ? 'business-data-row has-alert bg-white hover:bg-slate-50' : 'business-data-row bg-white hover:bg-slate-50'}>
                         <td className="py-3 px-4 whitespace-nowrap">
@@ -1582,9 +1786,21 @@ export default function App() {
                         <td className="py-3 px-4">
                           <div className="font-semibold text-slate-800">{t(ar.customerName)}</div>
                           <div className="text-xs text-slate-500">{t(ar.vendorRef)}</div>
+                          {arAccess.unassigned ? (
+                            <div className="text-[11px] font-semibold text-amber-700 mt-0.5">{t('Hàng chờ chung · Chưa có người phụ trách')}</div>
+                          ) : (
+                            <div className="text-[11px] font-semibold text-emerald-800 mt-0.5">
+                              {t('Phụ trách:')} {arAccess.ownerLabel || ar.assignedAccountantName || ar.createdByName || 'Phòng Kế toán'}
+                            </div>
+                          )}
+                          {ar.pendingTransfer && (
+                            <div className="text-[11px] font-semibold text-blue-700 mt-0.5">
+                              {t('Chờ xác nhận chuyển giao ->')} {ar.pendingTransfer.toUserName} ({ar.pendingTransfer.reason})
+                            </div>
+                          )}
                           {isRed && (
                             <AlertAssignmentLine
-                              alertRef={{ id: alertObj.id, type: 'receivables', reference: ar.docNo }}
+                              alertRef={{ id: alertObj.id, type: 'receivables', reference: ar.docNo, data: ar }}
                               tasks={allDirectoryTasks}
                               accounts={accounts}
                               reminders={allReminders}
@@ -1608,8 +1824,41 @@ export default function App() {
                         <td className="py-3 px-4 text-right font-mono text-slate-700 font-semibold">{formatVnd(ar.allocatedPaid)}</td>
                         <td className={`py-3 px-4 text-right font-mono font-bold ${isRed ? 'text-rose-700' : 'text-slate-900'}`}>{formatVnd(ar.remaining)}</td>
                         <td className="py-3 px-4 text-xs text-slate-600 max-w-xs">
-                          {t(ar.commitmentNote || '—')}
-                        </td><td className="sticky-action"><div className="row-actions">{canManageArCrud && <button type="button" className="row-detail-button" onClick={() => openWorkspace({ type: 'EDIT_AR', debtType: 'receivables', data: ar })}>{t("Sửa")}</button>}{canManageArCrud && Number(ar.allocatedPaid || 0) === 0 && <button type="button" className="row-detail-button" onClick={() => handleDeleteDebt('receivables', ar)}>{t("Xóa")}</button>}<button className="row-detail-button" onClick={() => openWorkspace({ type: 'DEBT_DETAIL', debtType: 'receivables', data: ar })}>{t("Chi tiết")}<ChevronRight size={15} /></button></div></td>
+                          <div className="font-semibold text-slate-700">{t(ar.remaining <= 0 ? 'Đã xác nhận thu đủ' : (ar.collectionState || 'Chưa lập đề nghị thu'))}</div>
+                          <div>{t(ar.commitmentNote || '—')}</div>
+                        </td><td className="sticky-action"><div className="row-actions is-icon-row">
+                          {ar.pendingTransfer?.toUserId === currentUser?.id && (
+                            <>
+                              <IconActionButton icon={Check} variant="success" label={t("Xác nhận nhận chuyển giao")} onClick={() => handleRespondTransferDebt('receivables', ar, true)} />
+                              <IconActionButton icon={X} variant="danger" label={t("Từ chối nhận chuyển giao")} onClick={() => handleRespondTransferDebt('receivables', ar, false)} />
+                            </>
+                          )}
+                          {currentRole === 'Accountant' && arAccess.unassigned && (
+                            <>
+                              <IconActionButton icon={Hand} variant="primary" label={t("Nhận xử lý hồ sơ")} onClick={() => handleClaimDebt('receivables', ar)} />
+                              {canRemindBoss && <IconActionButton icon={Bell} variant="warning" label={t("Nhắc việc sếp phân công")} onClick={() => remindWorkAlert(alertObj)} />}
+                            </>
+                          )}
+                          {currentRole === 'Accountant' && !arAccess.unassigned && !arAccess.allowed && ar.pendingTransfer?.toUserId !== currentUser?.id && (
+                            <IconActionButton icon={Lock} variant="muted" label={`${t("Chỉ xem — Phụ trách:")} ${arAccess.ownerLabel}`} disabled />
+                          )}
+                          {Number(ar.remaining ?? 0) > 0 && !(currentRole === 'Accountant' && arAccess.unassigned) && arAction && (
+                            <IconActionButton icon={Send} variant="primary" label={t(arAction.label)} onClick={() => openWorkspace({ ...arAction, debtType: 'receivables', data: ar })} />
+                          )}
+                          {Number(ar.remaining ?? 0) > 0 && !(currentRole === 'Accountant' && arAccess.unassigned) && canManageArCrud && arAccess.allowed && (
+                            <IconActionButton icon={Pencil} label={t("Điều chỉnh / Sửa chứng từ")} onClick={() => openWorkspace({ type: 'EDIT_AR', debtType: 'receivables', data: ar })} />
+                          )}
+                          {Number(ar.remaining ?? 0) > 0 && currentRole === 'Accountant' && arAccess.isSelfOwned && !ar.pendingTransfer && (
+                            <IconActionButton icon={ArrowLeftRight} variant="warning" label={t("Chuyển giao cho kế toán khác")} onClick={() => openWorkspace({ type: 'TRANSFER_DEBT', debtType: 'receivables', data: ar })} />
+                          )}
+                          {Number(ar.remaining ?? 0) > 0 && isExecutiveRole(currentRole) && (
+                            <select aria-label={t("Phân công kế toán phụ trách")} title={t("Phân công kế toán phụ trách")} className="text-[11px] border border-slate-300 rounded px-1.5 py-1 bg-white text-slate-700" value={ar.assignedAccountantId || ''} onChange={e => handleAssignDebt('receivables', ar, e.target.value)}>
+                              <option value="">{t("— Hàng chờ —")}</option>
+                              {accounts.filter(u => u.role === 'Accountant' && u.status === 'active').map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                            </select>
+                          )}
+                          <IconActionButton icon={Eye} label={t("Xem chi tiết")} onClick={() => openWorkspace({ type: 'DEBT_DETAIL', debtType: 'receivables', data: ar })} />
+                        </div></td>
                       </tr>
                     );
                   })}
@@ -1617,6 +1866,15 @@ export default function App() {
               </table>
             </div>
             <ProgressivePaginationBar pagination={arPagination} itemUnit="khoản phải thu" />
+            <details className="cockpit-analytics-drawer">
+              <summary className="cockpit-analytics-summary">{t("Phân tích Tuổi nợ & Cảnh báo Phải thu")}</summary>
+              <div className="pt-2">
+                <DebtStatusOverview rows={sortedReceivables} debtType="receivables" role={currentRole}
+                  filter={debouncedDebtFilter} onFilter={setDebtFilter} onOpen={openWorkspace}
+                  redOnly={onlyMyRoleRedAlerts} onClearRed={() => { setOnlyMyRoleRedAlerts(false); setDebtFilter('all'); }}
+                  tasks={allDirectoryTasks} accounts={accounts} reminders={allReminders} onRemindAlert={canRemindBoss ? remindWorkAlert : undefined} />
+              </div>
+            </details>
           </section>
         )}
         {activeSection === 'payables' && (
@@ -1626,6 +1884,12 @@ export default function App() {
                 <h2 className="text-lg font-bold text-slate-900 mt-1">{t("Công nợ phải trả")}</h2>
               </div>
               <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  aria-pressed={onlyUnassignedDebt}
+                  onClick={() => setOnlyUnassignedDebt(v => !v)}
+                  className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold border cursor-pointer ${onlyUnassignedDebt ? 'bg-amber-600 text-white border-amber-600' : 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'}`}
+                >{t("Chưa có người nhận")} ({sortedPayables.filter(p => canActorEditFinanceRecord(currentUser, p, 'payables', allDirectoryTasks, accounts).unassigned).length})</button>
                 {canManageApCrud && <button
                   type="button"
                   onClick={() => openWorkspace({ type: 'CREATE_AP', debtType: 'payables', data: null })}
@@ -1634,12 +1898,15 @@ export default function App() {
               </div>
             </div>
 
+            <div className="role-compact-grid">
+              <div className="role-compact-tile"><span>{t('Tổng còn phải trả')}</span><strong>{formatVnd(apSummary.total)}</strong></div>
+              <div className="role-compact-tile"><span>{t('Quá hạn & đến hạn')}</span><strong className="text-rose-700">{formatVnd(apSummary.due)}</strong></div>
+              <div className="role-compact-tile"><span>{t('Chờ CEO duyệt chi')}</span><strong>{sortedPayables.filter(row => payableWorkflowStatus(row) === AP_PENDING).length} {t('hồ sơ')}</strong></div>
+              <div className="role-compact-tile"><span>{t('Chờ tiếp nhận / Chuyển giao')}</span><strong className="text-amber-700">{sortedPayables.filter(p => canActorEditFinanceRecord(currentUser, p, 'payables', allDirectoryTasks, accounts).unassigned || p.pendingTransfer?.toUserId === currentUser?.id).length} {t('hồ sơ')}</strong></div>
+            </div>
+
             <div className="workflow-filter-tabs" aria-label={t("Lọc quy trình chi")}>{[['all', 'Tất cả hồ sơ'], [AP_SPLIT_REQUIRED, AP_SPLIT_REQUIRED], [AP_PENDING, 'Chờ CEO duyệt'], [AP_APPROVED, 'Đã duyệt chi'], [AP_REVIEW, 'Cần lập đề nghị'], [AP_RETURNED, 'Cần bổ sung']].map(([value, label]) => <button key={value} aria-pressed={payableWorkflowFilter === value} onClick={() => { setPayableWorkflowFilter(value); if (debtFilter !== 'all') setDebtFilter('all'); }}>{t(label)}<span>{value === 'all' ? sortedPayables.length : sortedPayables.filter(row => payableWorkflowStatus(row) === value).length}</span></button>)}</div>
-            <DebtStatusOverview rows={payableScope} debtType="payables" role={currentRole} canSplit={canReadOrdersData}
-              filter={debouncedDebtFilter} onFilter={setDebtFilter} onOpen={openWorkspace}
-              redOnly={onlyMyRoleRedAlerts} onClearRed={() => { setOnlyMyRoleRedAlerts(false); setDebtFilter('all'); }}
-              tasks={allDirectoryTasks} accounts={accounts} reminders={allReminders} onRemindAlert={canRemindBoss ? remindWorkAlert : undefined} />
-            <div className="overflow-x-auto border border-slate-200 rounded-xl">
+            <div className="overflow-x-auto border border-slate-200 rounded-xl cockpit-table-viewport">
               <table className="w-full text-left border-collapse text-xs sm:text-sm">
                 <thead>
                   <tr className="bg-slate-100 text-slate-700 font-bold uppercase text-xs border-b border-slate-200">
@@ -1651,14 +1918,15 @@ export default function App() {
                     <th className="py-3 px-4 text-right">{t("Đã trả")}</th>
                     <th className="py-3 px-4 text-right">{t("Còn phải trả")}</th>
                     <th className="py-3 px-4 text-center">{t("Trạng thái hồ sơ")}</th>
-                    <th className="py-3 px-4 text-right sticky-action">{t("Thao tác (")}{t(currentUser.roleLabel)})</th>
+                    <th className="py-3 px-4 text-right sticky-action">{t("Thao tác")}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200">
                   {!apPagination.loading && !apPagination.error && !apPagination.totalItems && <tr><td colSpan={9} className="empty-table">{t("Không có khoản phải trả phù hợp. ")}<button onClick={resetFilters}>{t("Xóa bộ lọc")}</button></td></tr>}
-                  {apPagination.visibleItems.map(ap => {
+                  {apPagination.visibleItems.filter(ap => !onlyUnassignedDebt || canActorEditFinanceRecord(currentUser, ap, 'payables', allDirectoryTasks, accounts).unassigned).map(ap => {
                     const isRed = ap.priorityRank === 0;
-                    const action = payableAction(ap, currentRole, canReadOrdersData);
+                    const apAccess = canActorEditFinanceRecord(currentUser, ap, 'payables', allDirectoryTasks, accounts);
+                    const action = apAccess.allowed ? payableAction(ap, currentRole, canReadOrdersData) : null;
                     const status = payableWorkflowStatus(ap);
                     const alertObj = { id: `payables-${ap.id}`, type: 'payables', reference: ap.docNo, label: ap.supplierName, status: ap.alertLabel, data: ap };
                     return (
@@ -1674,9 +1942,21 @@ export default function App() {
                         <td className="py-3 px-4 font-semibold text-slate-800">
                           <div>{t(ap.supplierName)}</div>
                           <div className="text-xs text-slate-500">{ap.category}</div>
+                          {apAccess.unassigned ? (
+                            <div className="text-[11px] font-semibold text-amber-700 mt-0.5">{t('Hàng chờ chung · Chưa có người phụ trách')}</div>
+                          ) : (
+                            <div className="text-[11px] font-semibold text-emerald-800 mt-0.5">
+                              {t('Phụ trách:')} {apAccess.ownerLabel || ap.assignedAccountantName || ap.createdByName || ap.pic || 'Phòng Kế toán'}
+                            </div>
+                          )}
+                          {ap.pendingTransfer && (
+                            <div className="text-[11px] font-semibold text-blue-700 mt-0.5">
+                              {t('Chờ xác nhận chuyển giao ->')} {ap.pendingTransfer.toUserName} ({ap.pendingTransfer.reason})
+                            </div>
+                          )}
                           {isRed && (
                             <AlertAssignmentLine
-                              alertRef={{ id: alertObj.id, type: 'payables', reference: ap.docNo }}
+                              alertRef={{ id: alertObj.id, type: 'payables', reference: ap.docNo, data: ap }}
                               tasks={allDirectoryTasks}
                               accounts={accounts}
                               reminders={allReminders}
@@ -1707,7 +1987,39 @@ export default function App() {
                             {t(status)}
                           </span>
                         </td>
-                        <td className="py-3 px-4 sticky-action"><div className="row-actions">{action && <button onClick={() => openWorkspace({ type: action.type, data: ap })} className="row-primary-button">{t(action.label)}</button>}{canManageApCrud && <button type="button" className="row-detail-button" onClick={() => openWorkspace({ type: 'EDIT_AP', debtType: 'payables', data: ap })}>{t("Sửa")}</button>}{canManageApCrud && Number(ap.allocatedPaid || 0) === 0 && <button type="button" className="row-detail-button" onClick={() => handleDeleteDebt('payables', ap)}>{t("Xóa")}</button>}<button className="row-detail-button" onClick={() => openWorkspace({ type: 'DEBT_DETAIL', debtType: 'payables', data: ap })}>{t("Chi tiết")}<ChevronRight size={15} /></button></div></td>
+                        <td className="py-3 px-4 sticky-action"><div className="row-actions is-icon-row">
+                          {ap.pendingTransfer?.toUserId === currentUser?.id && (
+                            <>
+                              <IconActionButton icon={Check} variant="success" label={t("Xác nhận nhận chuyển giao")} onClick={() => handleRespondTransferDebt('payables', ap, true)} />
+                              <IconActionButton icon={X} variant="danger" label={t("Từ chối nhận chuyển giao")} onClick={() => handleRespondTransferDebt('payables', ap, false)} />
+                            </>
+                          )}
+                          {currentRole === 'Accountant' && apAccess.unassigned && (
+                            <>
+                              <IconActionButton icon={Hand} variant="primary" label={t("Nhận xử lý hồ sơ")} onClick={() => handleClaimDebt('payables', ap)} />
+                              {canRemindBoss && <IconActionButton icon={Bell} variant="warning" label={t("Nhắc việc sếp phân công")} onClick={() => remindWorkAlert(alertObj)} />}
+                            </>
+                          )}
+                          {currentRole === 'Accountant' && !apAccess.unassigned && !apAccess.allowed && ap.pendingTransfer?.toUserId !== currentUser?.id && (
+                            <IconActionButton icon={Lock} variant="muted" label={`${t("Chỉ xem — Phụ trách:")} ${apAccess.ownerLabel}`} disabled />
+                          )}
+                          {Number(ap.remaining ?? 0) > 0 && !(currentRole === 'Accountant' && apAccess.unassigned) && action && (
+                            <IconActionButton icon={Send} variant="primary" label={t(action.label)} onClick={() => openWorkspace({ type: action.type, data: ap })} />
+                          )}
+                          {Number(ap.remaining ?? 0) > 0 && !(currentRole === 'Accountant' && apAccess.unassigned) && canManageApCrud && apAccess.allowed && (
+                            <IconActionButton icon={Pencil} label={t("Điều chỉnh / Sửa chứng từ")} onClick={() => openWorkspace({ type: 'EDIT_AP', debtType: 'payables', data: ap })} />
+                          )}
+                          {Number(ap.remaining ?? 0) > 0 && currentRole === 'Accountant' && apAccess.isSelfOwned && !ap.pendingTransfer && (
+                            <IconActionButton icon={ArrowLeftRight} variant="warning" label={t("Chuyển giao cho kế toán khác")} onClick={() => openWorkspace({ type: 'TRANSFER_DEBT', debtType: 'payables', data: ap })} />
+                          )}
+                          {Number(ap.remaining ?? 0) > 0 && isExecutiveRole(currentRole) && (
+                            <select aria-label={t("Phân công kế toán phụ trách")} title={t("Phân công kế toán phụ trách")} className="text-[11px] border border-slate-300 rounded px-1.5 py-1 bg-white text-slate-700" value={ap.assignedAccountantId || ''} onChange={e => handleAssignDebt('payables', ap, e.target.value)}>
+                              <option value="">{t("— Hàng chờ —")}</option>
+                              {accounts.filter(u => u.role === 'Accountant' && u.status === 'active').map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                            </select>
+                          )}
+                          <IconActionButton icon={Eye} label={t("Xem chi tiết")} onClick={() => openWorkspace({ type: 'DEBT_DETAIL', debtType: 'payables', data: ap })} />
+                        </div></td>
                       </tr>
                     );
                   })}
@@ -1715,6 +2027,15 @@ export default function App() {
               </table>
             </div>
             <ProgressivePaginationBar pagination={apPagination} itemUnit="khoản phải trả" />
+            <details className="cockpit-analytics-drawer">
+              <summary className="cockpit-analytics-summary">{t("Phân tích Tuổi nợ & Cảnh báo Phải trả")}</summary>
+              <div className="pt-2">
+                <DebtStatusOverview rows={payableScope} debtType="payables" role={currentRole} canSplit={canReadOrdersData}
+                  filter={debouncedDebtFilter} onFilter={setDebtFilter} onOpen={openWorkspace}
+                  redOnly={onlyMyRoleRedAlerts} onClearRed={() => { setOnlyMyRoleRedAlerts(false); setDebtFilter('all'); }}
+                  tasks={allDirectoryTasks} accounts={accounts} reminders={allReminders} onRemindAlert={canRemindBoss ? remindWorkAlert : undefined} />
+              </div>
+            </details>
           </section>
         )}
         </div>
@@ -1750,7 +2071,10 @@ export default function App() {
                     {t(workspacePanel.type === 'SUBMIT_AP' && 'Lập đề nghị chi')}
                     {t(workspacePanel.type === 'SPLIT_AP' && 'Tách chứng từ phải trả')}
                     {t(workspacePanel.type === 'REVIEW_AP' && 'Xem xét đề nghị chi')}
-                    {t(workspacePanel.type === 'PAY_AP' && 'Ghi nhận khoản đã chi')}
+                    {t(workspacePanel.type === 'PAY_AP' && 'Xác nhận đã chi trả')}
+                    {t(workspacePanel.type === 'SUBMIT_AR' && 'Lập đề nghị thu')}
+                    {t(workspacePanel.type === 'REVIEW_AR' && 'Xác nhận đề nghị thu')}
+                    {t(workspacePanel.type === 'CONFIRM_AR' && 'Xác nhận đã thu tiền')}
                     {workspacePanel.type === 'DEBT_DETAIL' && workspacePanel.data.docNo}
                   </h3>
                 </div>
@@ -1776,21 +2100,26 @@ export default function App() {
             </div>
             <div className="workspace-body" onChangeCapture={event => { if (event.target.closest('form')) { setWorkspaceDirty(true); setWorkspaceError(''); } }}>
               {workspaceError && <div className="workspace-error" role="alert" tabIndex={-1}><AlertTriangle size={18} /><span>{t(workspaceError)}</span></div>}
-              {workspacePanel.type === 'ITEM_DETAIL' && <ItemDetailPanel item={workspacePanel.data} reportDate={reportDate} canEdit={canUpdateProgress} canLowerAlerts={isExecutiveRole(currentRole)} financials={itemFinancialSummary(workspacePanel.data, { revenue: showRevenue ? revenueRecords : [], receivables: classifiedAr, payables: classifiedAp })} isSaving={isSavingWorkspace} onSubmit={handleUpdateItemProgress} onClose={requestCloseWorkspace} tasks={allDirectoryTasks} accounts={accounts} reminders={allReminders} onRemindAlert={canRemindBoss ? remindWorkAlert : undefined} />}
-              {['ALLOCATE_AR', 'CREATE_AR', 'EDIT_AR', 'RECORD_REV', 'CREATE_AP', 'EDIT_AP', 'SPLIT_AP', 'SUBMIT_AP', 'REVIEW_AP', 'PAY_AP'].includes(workspacePanel.type) &&
+              {workspacePanel.type === 'ITEM_DETAIL' && (() => {
+                const orderAccess = canActorEditOrder(currentUser, workspacePanel.data, allDirectoryTasks, accounts);
+                return <ItemDetailPanel showFinancials={currentRole !== 'Sale' && (showRevenue || showReceivables || showPayables)} serverError={workspaceError} item={workspacePanel.data} reportDate={reportDate} canEdit={canUpdateProgress && orderAccess.allowed} readOnlyReason={canUpdateProgress && !orderAccess.allowed ? `${t('Đơn hàng này đang do')} ${orderAccess.ownerLabel} ${t('phụ trách. Bạn chỉ có quyền xem, không thể chỉnh sửa.')}` : ''} canLowerAlerts={isExecutiveRole(currentRole)} financials={itemFinancialSummary(workspacePanel.data, { revenue: showRevenue ? revenueRecords : [], receivables: classifiedAr, payables: classifiedAp })} isSaving={isSavingWorkspace} onSubmit={handleUpdateItemProgress} onClose={requestCloseWorkspace} tasks={allDirectoryTasks} accounts={accounts} reminders={allReminders} onRemindAlert={canRemindBoss ? remindWorkAlert : undefined} />;
+              })()}
+              {['ALLOCATE_AR', 'CREATE_AR', 'EDIT_AR', 'SUBMIT_AR', 'REVIEW_AR', 'CONFIRM_AR', 'RECORD_REV', 'CREATE_AP', 'EDIT_AP', 'SPLIT_AP', 'SUBMIT_AP', 'REVIEW_AP', 'PAY_AP'].includes(workspacePanel.type) &&
                 (!financeLoaded || (needsDebtRecord && !workspaceDebt) ? <p role="status">{t(dataError || (dataLoading || !financeLoaded
                   ? 'Đang tải dữ liệu…' : 'Chứng từ không còn trong dữ liệu hiện tại.'))}</p> :
                   <fieldset className="min-w-0" disabled={isSavingWorkspace || dataLoading || Boolean(dataError)} aria-busy={isSavingWorkspace || dataLoading}>
                 {workspacePanel.type === 'ALLOCATE_AR' && <ReceiptWorkspace initialDebtId={workspacePanel.data?.id} finance={finance} onAction={handleFinanceAction} onClose={requestCloseWorkspace} />}
-                {workspacePanel.type === 'CREATE_AR' && <ReceivableCrudForm mode="create" finance={finance} items={vendorItems} onAction={handleFinanceAction} onClose={requestCloseWorkspace} />}
-                {workspacePanel.type === 'EDIT_AR' && <ReceivableCrudForm mode="edit" row={workspaceDebt} finance={finance} items={vendorItems} onAction={handleFinanceAction} onClose={requestCloseWorkspace} />}
-                {workspacePanel.type === 'RECORD_REV' && <InvoiceForm finance={finance} items={vendorItems} onAction={handleFinanceAction} onClose={requestCloseWorkspace} />}
-                {workspacePanel.type === 'CREATE_AP' && <PayableCrudForm mode="create" finance={finance} items={vendorItems} onAction={handleFinanceAction} onClose={requestCloseWorkspace} />}
-                {workspacePanel.type === 'EDIT_AP' && <PayableCrudForm mode="edit" row={workspaceDebt} finance={finance} items={vendorItems} onAction={handleFinanceAction} onClose={requestCloseWorkspace} />}
+                {workspacePanel.type === 'CREATE_AR' && <ReceivableCrudForm mode="create" actor={currentUser} finance={finance} items={vendorItems} onAction={handleFinanceAction} onClose={requestCloseWorkspace} />}
+                {workspacePanel.type === 'EDIT_AR' && <ReceivableCrudForm mode="edit" actor={currentUser} row={workspaceDebt} finance={finance} items={vendorItems} onAction={handleFinanceAction} onClose={requestCloseWorkspace} />}
+                {workspacePanel.type === 'RECORD_REV' && <InvoiceForm actor={currentUser} finance={finance} items={vendorItems} onAction={handleFinanceAction} onClose={requestCloseWorkspace} />}
+                {workspacePanel.type === 'CREATE_AP' && <PayableCrudForm mode="create" actor={currentUser} finance={finance} items={vendorItems} onAction={handleFinanceAction} onClose={requestCloseWorkspace} />}
+                {workspacePanel.type === 'EDIT_AP' && <PayableCrudForm mode="edit" actor={currentUser} row={workspaceDebt} finance={finance} items={vendorItems} onAction={handleFinanceAction} onClose={requestCloseWorkspace} />}
                 {workspacePanel.type === 'SPLIT_AP' && <SplitPayableForm row={workspaceDebt} items={vendorItems} onAction={handleFinanceAction} onClose={requestCloseWorkspace} />}
                 {['SUBMIT_AP', 'REVIEW_AP', 'PAY_AP'].includes(workspacePanel.type) && <PayableForm actorId={currentUser.id} actorRole={currentRole} type={workspacePanel.type} row={workspaceDebt} onAction={handleFinanceAction} onClose={requestCloseWorkspace} />}
+                {['SUBMIT_AR', 'REVIEW_AR', 'CONFIRM_AR'].includes(workspacePanel.type) && <ReceivableWorkflowForm actorId={currentUser.id} type={workspacePanel.type} row={workspaceDebt} onAction={handleFinanceAction} onClose={requestCloseWorkspace} />}
               </fieldset>)}
-              {workspacePanel.type === 'DEBT_DETAIL' && <DebtDetailPanel row={classifyDebt(workspaceDebt ?? workspacePanel.data, reportDate)} debtType={workspacePanel.debtType} role={currentRole} canSplit={canReadOrdersData} history={visibleFinanceHistory} onOpen={openWorkspace} onClose={requestCloseWorkspace} onDelete={handleDeleteDebt} tasks={allDirectoryTasks} accounts={accounts} reminders={allReminders} onRemindAlert={canRemindBoss ? remindWorkAlert : undefined} />}
+              {workspacePanel.type === 'TRANSFER_DEBT' && <TransferDebtForm row={workspaceDebt ?? workspacePanel.data} debtType={workspacePanel.debtType} currentUserId={currentUser?.id} accounts={accounts} onSubmit={handleRequestTransferDebt} onClose={requestCloseWorkspace} />}
+              {workspacePanel.type === 'DEBT_DETAIL' && <DebtDetailPanel actor={currentUser} row={classifyDebt(workspaceDebt ?? workspacePanel.data, reportDate, { debtType: workspacePanel.debtType, orders: vendorItems })} debtType={workspacePanel.debtType} role={currentRole} canSplit={canReadOrdersData} history={visibleFinanceHistory} onOpen={openWorkspace} onClose={requestCloseWorkspace} onDelete={handleDeleteDebt} onClaim={handleClaimDebt} onTransferRespond={handleRespondTransferDebt} tasks={allDirectoryTasks} accounts={accounts} reminders={allReminders} onRemindAlert={canRemindBoss ? remindWorkAlert : undefined} />}
             </div>
           </div>
           {showDiscardDialog && <div className="discard-overlay"><section role="alertdialog" aria-modal="true" aria-labelledby="discard-title" className="discard-dialog"><h3 id="discard-title">{t("Bạn chưa lưu thay đổi")}</h3><p>{t("Giữ cửa sổ này để tiếp tục chỉnh sửa hoặc bỏ phần chưa lưu.")}</p><div><button className="primary" onClick={() => { setShowDiscardDialog(false); document.querySelector('.workspace-dialog input:not([type=hidden]), .workspace-dialog textarea')?.focus(); }}>{t("Tiếp tục chỉnh sửa")}</button><button onClick={() => { setShowDiscardDialog(false); setWorkspaceDirty(false); setWorkspacePanel(null); }}>{t("Bỏ thay đổi")}</button></div></section></div>}

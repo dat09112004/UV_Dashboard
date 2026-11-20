@@ -1,5 +1,5 @@
 import { locale, phrase, t } from '../../locales/i18n.js';
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ShoppingBag, PackageCheck, Truck, CalendarDays } from 'lucide-react';
 import { getFulfillment, formatQuantity, formatPercent, dateInputValue } from '../../utils/orderFulfillment.js';
 import { formatMoney, formatDate } from '../../utils/dashboardMetrics.js';
@@ -8,9 +8,11 @@ import { parseBusinessDate } from '../../utils/business.js';
 import { computeProjectedProgress } from '../../utils/workspaceUi.js';
 import { QuantityProgress } from './FulfillmentTable.jsx';
 import AlertAssignmentLine from '../common/AlertAssignmentLine.jsx';
+import { formatMoneyInputHint } from '../finance/MoneyField.jsx';
 
+// Chức năng: Cửa sổ chi tiết dòng đơn hàng PO: đối chiếu tài chính (Doanh thu/AR/AP), lịch sử cập nhật và biểu mẫu sửa tiến độ
 export default function ItemDetailPanel({
-  item, reportDate, canEdit, canLowerAlerts, financials, isSaving, onSubmit, onClose,
+  item, reportDate, canEdit, readOnlyReason = '', canLowerAlerts, financials, showFinancials = true, isSaving, serverError = '', onSubmit, onClose,
   tasks = [], accounts = [], reminders = [], onRemindAlert,
 }) {
   const state = getFulfillment(item, reportDate);
@@ -25,11 +27,42 @@ export default function ItemDetailPanel({
   const [shipDateEtd, setShipDateEtd] = useState(() => dateInputValue(item.shipDateEtd));
   const [actualShipDate, setActualShipDate] = useState(() => dateInputValue(item.actualShipDate));
   const [etaDate, setEtaDate] = useState(() => dateInputValue(item.etaDate));
-  const [onProcessPct, setOnProcessPct] = useState(item.onProcessPct != null ? String(item.onProcessPct) : '');
-  const [packagingPct, setPackagingPct] = useState(item.packagingPct != null ? String(item.packagingPct) : '');
+  const [customerName, setCustomerName] = useState(item.customerName || '');
+  const [unitPriceInput, setUnitPriceInput] = useState(item.unitPriceVnd != null ? String(item.unitPriceVnd) : '');
+  const [salePriceInput, setSalePriceInput] = useState(item.saleUnitPriceVnd != null ? String(item.saleUnitPriceVnd) : '');
+  const [onProcessPct, setOnProcessPct] = useState(item.onProcessPct != null ? String(item.onProcessPct) : '0');
+  const [packagingPct, setPackagingPct] = useState(item.packagingPct != null ? String(item.packagingPct) : '0');
   const [changeReason, setChangeReason] = useState('');
   const [reasonTouched, setReasonTouched] = useState(false);
+  const [submitError, setSubmitError] = useState('');
+  const [productionOpen, setProductionOpen] = useState(false);
+  const lastSyncedKeyRef = useRef(`${item.rowId}:${item.trackingVersion ?? ''}`);
 
+  // Chức năng: Tự động làm mới ô nhập sau khi lưu thành công (reset ô Nhập thêm hôm nay về trống để không bị cộng dồn lại chính số vừa lưu)
+  useEffect(() => {
+    const nextKey = `${item.rowId}:${item.trackingVersion ?? ''}`;
+    if (lastSyncedKeyRef.current === nextKey) return;
+    lastSyncedKeyRef.current = nextKey;
+    setOrderedInput(item.orderedQty != null ? String(item.orderedQty) : '');
+    setUnitInput(item.unit || '');
+    setNhapInput(progressMode === 'today' ? '' : (item.nhap != null ? String(item.nhap) : ''));
+    setDeliveredInput(progressMode === 'today' ? '' : (item.deliveredQty != null ? String(item.deliveredQty) : ''));
+    setExpectedReceiptDate(dateInputValue(item.expectedReceiptDate));
+    setActualDeliveryDate(dateInputValue(item.actualDeliveryDate));
+    setShipDateEtd(dateInputValue(item.shipDateEtd));
+    setActualShipDate(dateInputValue(item.actualShipDate));
+    setEtaDate(dateInputValue(item.etaDate));
+    setCustomerName(item.customerName || '');
+    setUnitPriceInput(item.unitPriceVnd != null ? String(item.unitPriceVnd) : '');
+    setSalePriceInput(item.saleUnitPriceVnd != null ? String(item.saleUnitPriceVnd) : '');
+    setOnProcessPct(item.onProcessPct != null ? String(item.onProcessPct) : '0');
+    setPackagingPct(item.packagingPct != null ? String(item.packagingPct) : '0');
+    setChangeReason('');
+    setReasonTouched(false);
+    setSubmitError('');
+  }, [item, progressMode]);
+
+  // Chức năng: Xử lý nghiệp vụ (switchMode - Mode) phục vụ xử lý dữ liệu trong ItemDetailPanel.jsx
   const switchMode = nextMode => {
     if (nextMode === progressMode) return;
     setProgressMode(nextMode);
@@ -98,37 +131,83 @@ export default function ItemDetailPanel({
   const reasonError = reasonTouched && !String(changeReason || '').trim()
     ? 'Cần lý do cập nhật, tối đa 500 ký tự.' : '';
 
+  // Chức năng: Xử lý sự kiện (handleSubmit - Submit) phục vụ xử lý dữ liệu trong ItemDetailPanel.jsx
+  const parsedImportPrice = Number(String(unitPriceInput || '').replace(/[.,\s]/g, '')) || 0;
+  const parsedSalePrice = Number(String(salePriceInput || '').replace(/[.,\s]/g, '')) || 0;
+  const projectedApVnd = (projection.projectedReceived ?? 0) > 0 && parsedImportPrice > 0
+    ? Math.round((projection.projectedReceived ?? 0) * parsedImportPrice) : 0;
+  const projectedArVnd = (projection.projectedDelivered ?? 0) > 0 && parsedSalePrice > 0
+    ? Math.round((projection.projectedDelivered ?? 0) * parsedSalePrice) : 0;
+  const projectedCogsVnd = (projection.projectedDelivered ?? 0) > 0 && parsedImportPrice > 0
+    ? Math.round((projection.projectedDelivered ?? 0) * parsedImportPrice) : 0;
+  const projectedActualRevVnd = projectedArVnd - projectedCogsVnd;
+  const salePriceError = (projection.projectedDelivered ?? 0) > 0 && !(parsedSalePrice > 0)
+    ? 'Vui lòng nhập Đơn giá bán ra cho khách (VND) lớn hơn 0 khi giao hàng.' : '';
+  const salePriceWarning = (projection.projectedDelivered ?? 0) > 0 && parsedSalePrice > 0 && parsedImportPrice > 0 && parsedSalePrice <= parsedImportPrice
+    ? 'Cảnh báo: Đơn giá bán ra đang nhỏ hơn hoặc bằng đơn giá nhập kho (lãi gộp <= 0).' : '';
+  const customerError = (projection.projectedDelivered ?? 0) > 0 && !String(customerName || '').trim()
+    ? 'Vui lòng nhập tên Khách hàng / Bên nhận khi có số lượng giao khách để ghi nhận Doanh thu và Công nợ phải thu.' : '';
+
   const handleSubmit = event => {
     setReasonTouched(true);
+    const firstError =
+      projection.orderedInspect.error ||
+      unitError ||
+      projection.nhapInspect.error ||
+      projection.deliveredInspect.error ||
+      customerError ||
+      salePriceError ||
+      receiptDateError ||
+      actualShipError ||
+      actualDeliveryError ||
+      etdError ||
+      etaError ||
+      onProcessError ||
+      packagingError ||
+      (!String(changeReason || '').trim() ? 'Cần nhập lý do cập nhật tiến độ trước khi lưu.' : '');
+    if (firstError) {
+      event.preventDefault();
+      if (onProcessError || packagingError) setProductionOpen(true);
+      setSubmitError(firstError);
+      return;
+    }
+    setSubmitError('');
     onSubmit(event);
   };
 
   const alertObj = { id: `order-${item.rowId}`, type: 'orders', reference: item.poId, label: item.vendorItemNo, status: item.alertLabel, data: item };
+  const isSaleOwned = item.ownerType === 'sale_self_owned' || item.createdByRole === 'Sale';
   return <div className="item-detail-panel">
     <section className={`item-detail-notice ${item.priorityRank === 0 ? 'critical' : item.priorityRank === 1 ? 'warning' : 'normal'}`}>
       <div><strong>{t(item.alertLevel)}</strong>{item.lastUpdateDate && <span>{t("Cập nhật: ")}{item.lastUpdateDate} {t(item.lastUpdateTime)}</span>}</div>
       <p>{t(item.alertLabel)}</p>
-      {item.priorityRank === 0 && (
-        <AlertAssignmentLine
-          alertRef={{ id: alertObj.id, type: 'orders', reference: item.poId }}
-          tasks={tasks}
-          accounts={accounts}
-          reminders={reminders}
-          canRemind={Boolean(onRemindAlert)}
-          onRemind={() => onRemindAlert?.(alertObj)}
-        />
-      )}
+      <AlertAssignmentLine
+        alertRef={{ id: alertObj.id, type: 'orders', reference: item.poId, data: item }}
+        tasks={tasks}
+        accounts={accounts}
+        reminders={reminders}
+        canRemind={Boolean(onRemindAlert && item.priorityRank === 0)}
+        onRemind={() => onRemindAlert?.(alertObj)}
+      />
     </section>
     {canEdit && <button type="button" className="item-edit-shortcut" onClick={() => { formRef.current?.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth', block: 'start' }); formRef.current?.querySelector('input:not([type=hidden])')?.focus({ preventScroll: true }); }}>{t("Cập nhật tiến độ ")}<span aria-hidden="true">↓</span></button>}
-    {item.totalValueVnd != null && <div className="item-business-summary"><span>{t('Mã nhóm hàng')} <b>{item.category}</b></span><span>{t('Đơn giá đặt')} <b>{formatMoney(item.unitPriceVnd)} / {item.unit}</b></span><span>{t('Giá trị PO')} <b>{formatMoney(item.totalValueVnd)}</b></span></div>}
+    {item.totalValueVnd != null && <div className="item-business-summary">
+      <span>{t('Mã nhóm hàng')} <b>{item.category}</b></span>
+      <span>{t('Giá nhập kho')} <b>{formatMoney(item.unitPriceVnd)} / {item.unit}</b></span>
+      {item.saleUnitPriceVnd > 0 && <span>{t('Giá bán ra')} <b>{formatMoney(item.saleUnitPriceVnd)} / {item.unit}</b></span>}
+      <span>{t('Giá trị PO')} <b>{formatMoney(item.totalValueVnd)}</b></span>
+      <span>{t('Người tạo đơn')} <b>{(item.createdByRole === 'Admin' || item.createdByName === 'Quản trị Demo' ? 'Ban Giám đốc' : (item.createdByName || (isSaleOwned ? 'Nhân viên Sale' : 'Ban Giám đốc')))}</b></span>
+      <span>{t('Người đảm nhận')} <b>{isSaleOwned ? `${item.assignedSaleName || item.createdByName || 'Phòng Sale'} (${t('Sale tự nhận')})` : t('Theo phân công Giao việc')}</b></span>
+    </div>}
     <section className="fulfillment-stages" aria-label={t("Tiến độ nhập và giao của mã hàng")}>
       <div className="fulfillment-stage"><div className="stage-heading"><ShoppingBag size={20} /><strong>{t("Đã đặt hàng")}</strong></div><div className="stage-quantity">{formatQuantity(state.orderedQty)}<small> {item.unit}</small></div><span>{t(state.isReleased ? `PO phát hành ${formatDate(item.releasedPoDate)}` : 'Chưa có ngày phát hành PO')}</span>{state.orderedQty === null && <small className="stage-missing">{t("Cần bổ sung số lượng đặt")}</small>}</div>
       <div className="fulfillment-stage"><div className="stage-heading"><PackageCheck size={20} /><strong>{t("Đã về kho")}</strong></div><QuantityProgress label={t("Tỷ lệ đã về kho")} quantity={state.receivedQty} percent={state.receivedPct} unit={item.unit} tone={state.lateReceiptDays ? 'critical' : 'normal'} /><span>{t("Còn về: ")}{formatQuantity(state.remainingReceipt)} {item.unit}</span></div>
       <div className="fulfillment-stage"><div className="stage-heading"><Truck size={20} /><strong>{t("Đã giao khách")}</strong></div><QuantityProgress label={t("Tỷ lệ đã giao khách")} quantity={state.deliveredQty} percent={state.deliveredPct} unit={item.unit} tone={state.tone} /><span>{t(state.deliveredQty === null ? 'Chưa có xác nhận số lượng giao' : `Còn giao: ${formatQuantity(state.remainingDelivery)} ${item.unit}`)}</span></div>
     </section>
     <section className="item-delivery-dates"><CalendarDays size={19} /><div><span>{t("Dự kiến về kho")}</span><strong>{formatDate(item.expectedReceiptDate)}</strong></div><div><span>{t("Xuất dự kiến (ETD)")}</span><strong>{formatDate(item.shipDateEtd)}</strong></div><div><span>{t("Giao dự kiến (ETA)")}</span><strong>{formatDate(item.etaDate)}</strong></div><div><span>{t("Giao xác nhận gần nhất")}</span><strong>{formatDate(item.actualDeliveryDate)}</strong></div><span className={`fulfillment-status ${state.tone}`}>{t(state.label)}</span></section>
-    <div className="item-business-summary"><span>{t("Tồn đầu ")}<b>{formatQuantity(item.tonDau)} {item.unit}</b></span><span>{t("Số bán ")}<b>{formatQuantity(item.ban)} {item.unit}</b></span><span>{t("Sản xuất ")}<b>{formatPercent(item.onProcessPct)}</b>{t(" · Đóng gói ")}<b>{formatPercent(item.packagingPct)}</b></span><span>{t("Doanh thu ")}<b>{formatMoney(financials.revenue)}</b></span><span>{t("Phải thu liên quan ")}<b>{formatMoney(financials.receivables)}</b></span><span>{t(financials.grouped ? 'Phải trả trên CT gộp' : 'Phải trả liên quan')} <b>{formatMoney(financials.payables)}</b></span></div>
-    {canEdit ? <form ref={formRef} className="item-progress-form" onSubmit={handleSubmit}>
+    <div className="item-business-summary"><span>{t("Tồn đầu ")}<b>{formatQuantity(item.tonDau)} {item.unit}</b></span><span>{t("Số bán ")}<b>{formatQuantity(item.ban)} {item.unit}</b></span><span>{t("Sản xuất ")}<b>{formatPercent(item.onProcessPct)}</b>{t(" · Đóng gói ")}<b>{formatPercent(item.packagingPct)}</b></span>{showFinancials && <><span>{t("Doanh thu ")}<b>{formatMoney(financials.revenue)}</b></span><span>{t("Phải thu liên quan ")}<b>{formatMoney(financials.receivables)}</b></span><span>{t(financials.grouped ? 'Phải trả trên CT gộp' : 'Phải trả liên quan')} <b>{formatMoney(financials.payables)}</b></span></>}</div>
+    {!canEdit && readOnlyReason && <div className="entry-warnings" role="status" style={{ marginTop: 12 }}><strong>{t('Chế độ chỉ xem')}:</strong> {readOnlyReason}</div>}
+    {canEdit ? <form ref={formRef} className="item-progress-form" noValidate onSubmit={handleSubmit}>
       <div className="item-form-heading">
         <div>
           <h4>{t('Cập nhật số lượng lũy kế & lịch giao')}</h4>
@@ -146,12 +225,12 @@ export default function ItemDetailPanel({
         <h5 className="form-section-title">{t("Số lượng hàng")}</h5>
         <div className="item-form-grid">
           <label>{t("Số lượng đặt")}
-            <input type="text" inputMode="decimal" value={orderedInput} onChange={e => setOrderedInput(e.target.value)} placeholder={t("Ví dụ: 1.000")} />
+            <input type="text" inputMode="decimal" value={orderedInput} onChange={e => setOrderedInput(e.target.value)} />
             {projection.orderedInspect.error && <small className="field-hint is-error" role="alert">{t(projection.orderedInspect.error)}</small>}
             {!projection.orderedInspect.error && projection.orderedInspect.warning && <small className="field-hint is-warning">{t(projection.orderedInspect.warning)}</small>}
           </label>
           <label>{t("Đơn vị tính")}{projection.orderedQty !== null && <> <span className="required-mark" aria-hidden="true">*</span></>}
-            <input name="unit" value={unitInput} onChange={e => setUnitInput(e.target.value)} maxLength={24} placeholder="pcs, m, kg…" />
+            <input name="unit" value={unitInput} onChange={e => setUnitInput(e.target.value)} maxLength={24} />
             {unitError && <small className="field-hint is-error" role="alert">{t(unitError)}</small>}
           </label>
           <label>
@@ -163,13 +242,12 @@ export default function ItemDetailPanel({
               required={!item.inboundOnly && progressMode === 'cumulative'}
               value={nhapInput}
               onChange={e => setNhapInput(e.target.value)}
-              placeholder="0"
             />
             {projection.nhapInspect.error && <small className="field-hint is-error" role="alert">{t(projection.nhapInspect.error)}</small>}
             {!projection.nhapInspect.error && projection.nhapInspect.warning && <small className="field-hint is-warning">{t(projection.nhapInspect.warning)}</small>}
             {!projection.nhapInspect.error && progressMode === 'today' && (
               <small className="field-hint">
-                {phrase('Tổng sau lưu: §', formatQuantity(projection.projectedReceived ?? 0))}
+                {`${t('Đã về kho trước đó:')} ${formatQuantity(state.receivedQty ?? 0)} · ${t('Còn có thể nhập thêm tối đa:')} ${formatQuantity(Math.max(0, (projection.orderedQty ?? 0) - (state.receivedQty ?? 0)))} · ${phrase('Tổng sau lưu: §', formatQuantity(projection.projectedReceived ?? 0))}`}
               </small>
             )}
           </label>
@@ -180,7 +258,6 @@ export default function ItemDetailPanel({
               inputMode="decimal"
               value={deliveredInput}
               onChange={e => setDeliveredInput(e.target.value)}
-              placeholder="0"
             />
             {projection.deliveredInspect.error && <small className="field-hint is-error" role="alert">{t(projection.deliveredInspect.error)}</small>}
             {!projection.deliveredInspect.error && projection.deliveredInspect.warning && <small className="field-hint is-warning">{t(projection.deliveredInspect.warning)}</small>}
@@ -190,6 +267,48 @@ export default function ItemDetailPanel({
               </small>
             )}
           </label>
+          <label>
+            {t('Đơn giá nhập kho từ NCC (VND)')}
+            <input
+              name="unitPriceVnd"
+              type="text"
+              inputMode="numeric"
+              value={unitPriceInput}
+              onChange={e => setUnitPriceInput(e.target.value)}
+            />
+            {formatMoneyInputHint(unitPriceInput) && <small className="field-hint" style={{ color: '#1558c9', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{formatMoneyInputHint(unitPriceInput)}</small>}
+            <small className="field-hint">{t('Tính Công nợ phải trả NCC khi nhập kho.')}</small>
+          </label>
+          <label>
+            {t('Đơn giá bán ra cho khách (VND)')}{(projection.projectedDelivered ?? 0) > 0 && <> <span className="required-mark" aria-hidden="true">*</span></>}
+            <input
+              name="saleUnitPriceVnd"
+              type="text"
+              inputMode="numeric"
+              value={salePriceInput}
+              onChange={e => setSalePriceInput(e.target.value)}
+            />
+            {!salePriceError && formatMoneyInputHint(salePriceInput) && <small className="field-hint" style={{ color: '#1558c9', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{formatMoneyInputHint(salePriceInput)}</small>}
+            {salePriceError && <small className="field-hint is-error" role="alert">{t(salePriceError)}</small>}
+            {!salePriceError && salePriceWarning && <small className="field-hint is-warning">{t(salePriceWarning)}</small>}
+          </label>
+          <label className="workflow-wide">
+            {t('Khách hàng / Bên nhận giao hàng')}{(projection.projectedDelivered ?? 0) > 0 && <> <span className="required-mark" aria-hidden="true">*</span></>}
+            <input
+              name="customerName"
+              value={customerName}
+              maxLength={255}
+              onChange={e => setCustomerName(e.target.value)}
+            />
+            {customerError && <small className="field-hint is-error" role="alert">{t(customerError)}</small>}
+          </label>
+          {showFinancials && (projectedApVnd > 0 || projectedArVnd > 0) && (
+            <div className="workflow-wide p-3 rounded-lg bg-slate-50 border border-slate-200 text-xs flex flex-wrap gap-4 justify-between">
+              <span>{t('Phải trả NCC (Nhập kho):')} <strong className="text-slate-900">{formatMoney(projectedApVnd)}</strong></span>
+              <span>{t('Phải thu khách (Bán ra):')} <strong className="text-blue-700">{formatMoney(projectedArVnd)}</strong></span>
+              <span>{t('Doanh thu thực tế (Bán ra − Vốn nhập):')} <strong className={projectedActualRevVnd >= 0 ? 'text-emerald-700' : 'text-rose-700'}>{formatMoney(projectedActualRevVnd)}</strong></span>
+            </div>
+          )}
         </div>
         <details className="production-edit" open><summary>{t("Lịch xuất và giao hàng")}</summary><div className="item-form-grid">
           <label>{t("Dự kiến về kho")}
@@ -213,7 +332,7 @@ export default function ItemDetailPanel({
             {etaError && <small className="field-hint is-error" role="alert">{t(etaError)}</small>}
           </label>
         </div></details>
-        <details className="production-edit"><summary>{t("Sản xuất & cảnh báo thủ công")}</summary><div className="item-form-grid">
+        <details className="production-edit" open={productionOpen} onToggle={e => setProductionOpen(e.currentTarget.open)}><summary>{t("Sản xuất & cảnh báo thủ công")}</summary><div className="item-form-grid">
           <label>{t("Sản xuất (%)")}{!item.inboundOnly && <> <span className="required-mark" aria-hidden="true">*</span></>}
             <input name="onProcessPct" type="number" min="0" max="100" step="0.1" required={!item.inboundOnly} value={onProcessPct} onChange={e => setOnProcessPct(e.target.value)} />
             {onProcessError && <small className="field-hint is-error" role="alert">{t(onProcessError)}</small>}
@@ -223,15 +342,16 @@ export default function ItemDetailPanel({
             {packagingError && <small className="field-hint is-error" role="alert">{t(packagingError)}</small>}
           </label>
           <label>{t("Số bán trên dữ liệu gốc")}<input value={item.ban ?? ''} readOnly disabled /></label>
-          <label>{t("Cảnh báo thủ công")}<select name="manualPriorityRank" defaultValue={item.manualPriorityRank ?? item.priorityRank}>{['Báo động đỏ', 'Cần xử lý', 'Đúng hạn'].map((label, rank) => <option key={rank} value={rank} disabled={!canLowerAlerts && rank > (item.manualPriorityRank ?? item.priorityRank)}>{t(label)}</option>)}</select></label>
+          <label>{t("Cảnh báo thủ công")}<select name={canLowerAlerts ? "manualPriorityRank" : undefined} disabled={!canLowerAlerts} defaultValue={item.manualPriorityRank ?? item.priorityRank ?? 2}>{['Báo động đỏ', 'Cần xử lý', 'Đúng hạn'].map((label, rank) => <option key={rank} value={rank} disabled={!canLowerAlerts && rank > (item.manualPriorityRank ?? item.priorityRank)}>{t(label)}</option>)}</select></label>
         </div></details>
         <label className="update-reason">{t("Lý do cập nhật")} <span className="required-mark" aria-hidden="true">*</span>
-          <input name="changeReason" required maxLength={500} value={changeReason} onChange={e => { setChangeReason(e.target.value); setReasonTouched(true); }} onBlur={() => setReasonTouched(true)} placeholder={t("Nhập lý do cập nhật tiến độ…")} />
+          <input name="changeReason" required maxLength={500} value={changeReason} onChange={e => { setChangeReason(e.target.value); setReasonTouched(true); }} onBlur={() => setReasonTouched(true)} />
           {reasonError && <small className="field-hint is-error" role="alert">{t(reasonError)}</small>}
         </label>
       </fieldset>
+      {(submitError || serverError) && <div className="workspace-error" role="alert" style={{ marginTop: 12 }}><span>{t(submitError || serverError)}</span></div>}
       <div className="item-form-footer"><button type="button" onClick={onClose} disabled={isSaving}>{t("Đóng")}</button><button className="primary" type="submit" disabled={isSaving}>{t(isSaving ? 'Đang lưu…' : 'Lưu cập nhật')}</button></div>
     </form> : <div className="workflow-footer"><button type="button" onClick={onClose}>{t("Đóng")}</button></div>}
-    {item.trackingHistory?.length > 0 && <details className="workflow-history"><summary>{t("Lịch sử cập nhật tiến độ")}</summary><ul>{item.trackingHistory.slice(-8).reverse().map(row => <li key={row.id}><strong>{row.actorName}</strong> · {new Intl.DateTimeFormat(locale(), { timeZone: 'Asia/Ho_Chi_Minh', dateStyle: 'short', timeStyle: 'short' }).format(new Date(row.time))}<br />{t(row.reason)}</li>)}</ul></details>}
+    {item.trackingHistory?.length > 0 && <details className="workflow-history"><summary>{t("Lịch sử cập nhật tiến độ")}</summary><ul>{item.trackingHistory.slice(-8).reverse().map(row => <li key={row.id}><strong>{row.actorName === 'Quản trị Demo' || row.actorName === 'Admin' ? t('Ban Giám đốc') : row.actorName}</strong> · {new Intl.DateTimeFormat(locale(), { timeZone: 'Asia/Ho_Chi_Minh', dateStyle: 'short', timeStyle: 'short' }).format(new Date(row.time))}<br />{t(row.reason)}</li>)}</ul></details>}
   </div>;
 }

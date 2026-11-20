@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 const EMPTY_ITEMS = [];
 
+// Chức năng: React Custom Hook (useProgressivePagination) quản lý trạng thái và tối ưu hiệu năng giao diện
 export function useProgressivePagination(
   allItems = EMPTY_ITEMS,
   {

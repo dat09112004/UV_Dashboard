@@ -13,6 +13,7 @@ import {
   updateSessionAccount,
 } from '../../../services/api.js';
 
+// Chức năng: Thực hiện đăng nhập người dùng, lưu thông tin phiên an toàn và nạp dữ liệu khởi tạo hệ thống
 export async function signIn(
   email,
   password,
@@ -76,6 +77,7 @@ export async function restoreSessionOnLoad() {
     return restoreInFlight.promise;
   }
 
+  // Chức năng: Chạy tác vụ (runRestore - Restore) phục vụ xử lý dữ liệu trong authService.js
   const runRestore = async () => {
     const stored = getStoredAuthSession();
     if (!stored) return { status: 'anonymous' };
@@ -166,10 +168,12 @@ export async function restoreSessionOnLoad() {
   }
 }
 
+// Chức năng: Xác thực (authenticateAccount - Account) phục vụ xử lý dữ liệu trong authService.js
 export async function authenticateAccount(email, password, acceptedTerms, policyVersion, options) {
   return (await signIn(email, password, acceptedTerms, policyVersion, options)).account ?? null;
 }
 
+// Chức năng: Xử lý nghiệp vụ (changePassword - Password) phục vụ xử lý dữ liệu trong authService.js
 export async function changePassword(_accountId, currentPassword, newPassword) {
   if (typeof newPassword !== 'string' || newPassword.trim().length < 12 || newPassword.length > 128) {
     return 'Mật khẩu mới phải có từ 12 đến 128 ký tự.';

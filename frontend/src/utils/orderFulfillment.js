@@ -15,6 +15,64 @@ export const EMPTY_ORDER_TRACKING = Object.freeze({
   actualDeliveryDate: '',
 });
 
+// Chức năng: Chuẩn hóa thông tin người tạo đơn hàng và quyền đảm nhận đơn hàng (Sale tự động nhận đơn vs Sếp tạo mới phân công)
+export function resolveOrderOwnership(item = {}, patch = {}, actor = null) {
+  const historyList = Array.isArray(item?.trackingHistory) ? item.trackingHistory : [];
+  const firstHist = historyList.length > 0 ? historyList[0] : null;
+  const latestHist = historyList.length > 0 ? historyList[historyList.length - 1] : null;
+  const histMeta =
+    latestHist?.after?.createdById || latestHist?.after?.ownerType
+      ? latestHist.after
+      : firstHist?.after || {};
+  const isInitialCreation = historyList.length === 0 && !item?.createdById && !histMeta?.createdById;
+
+  const createdById =
+    patch?.createdById ??
+    item?.createdById ??
+    histMeta?.createdById ??
+    firstHist?.actorId ??
+    (isInitialCreation ? actor?.id ?? null : null);
+  const createdByName =
+    patch?.createdByName ??
+    item?.createdByName ??
+    histMeta?.createdByName ??
+    firstHist?.actorName ??
+    (isInitialCreation ? actor?.name ?? null : null);
+  const createdByRole =
+    patch?.createdByRole ??
+    item?.createdByRole ??
+    histMeta?.createdByRole ??
+    (isInitialCreation ? actor?.role ?? null : null);
+  const createdByEmail =
+    patch?.createdByEmail ??
+    item?.createdByEmail ??
+    histMeta?.createdByEmail ??
+    (isInitialCreation ? actor?.email ?? '' : '');
+
+  const rawOwnerType = patch?.ownerType ?? item?.ownerType ?? histMeta?.ownerType ?? null;
+  const isSaleSelfOwned = rawOwnerType === 'sale_self_owned' || createdByRole === 'Sale';
+  const ownerType = isSaleSelfOwned
+    ? 'sale_self_owned'
+    : rawOwnerType || (createdByRole ? 'executive_created' : 'executive_created');
+  const assignedSaleId = isSaleSelfOwned
+    ? (patch?.assignedSaleId ?? item?.assignedSaleId ?? histMeta?.assignedSaleId ?? createdById ?? null)
+    : (patch?.assignedSaleId ?? item?.assignedSaleId ?? histMeta?.assignedSaleId ?? null);
+  const assignedSaleName = isSaleSelfOwned
+    ? (patch?.assignedSaleName ?? item?.assignedSaleName ?? histMeta?.assignedSaleName ?? createdByName ?? null)
+    : (patch?.assignedSaleName ?? item?.assignedSaleName ?? histMeta?.assignedSaleName ?? null);
+
+  return {
+    createdById,
+    createdByName,
+    createdByRole,
+    createdByEmail,
+    assignedSaleId,
+    assignedSaleName,
+    ownerType,
+  };
+}
+
+// Chức năng: Xử lý nghiệp vụ (numberOrNull - Or Null) phục vụ xử lý dữ liệu trong orderFulfillment.js
 const numberOrNull = value => {
   if (value === '' || value === null || value === undefined) return null;
   if (typeof value === 'number') return value;
@@ -22,19 +80,23 @@ const numberOrNull = value => {
   return normalized === null ? Number.NaN : normalized === '' ? null : Number(normalized);
 };
 
+// Chức năng: Định dạng (formatQuantity - Quantity) phục vụ xử lý dữ liệu trong orderFulfillment.js
 export const formatQuantity = value =>
   value === null || value === undefined
     ? '—'
     : new Intl.NumberFormat(locale(), { maximumFractionDigits: 3 }).format(value);
 
+// Chức năng: Định dạng giá trị phần trăm (0% - 100%) để hiển thị trên thanh tiến độ và bảng dữ liệu
 export const formatPercent = value =>
   value === null || value === undefined
     ? '—'
     : new Intl.NumberFormat(locale(), { maximumFractionDigits: 1 }).format(value) + '%';
 
+// Chức năng: Xử lý nghiệp vụ (ratio - ratio) phục vụ xử lý dữ liệu trong orderFulfillment.js
 const ratio = (value, total) =>
   value === null || !Number.isFinite(total) || total <= 0 ? null : (value / total) * 100;
 
+// Chức năng: Tính toán tỷ lệ % hàng về kho, % đã giao khách, số lượng còn lại và trạng thái cảnh báo của một dòng PO
 export function getFulfillment(item, reportDate, { includeReceiptRisk = true } = {}) {
   const orderedQty = numberOrNull(item.orderedQty);
   const receivedQty = numberOrNull(item.nhap);
@@ -142,6 +204,7 @@ export function getFulfillment(item, reportDate, { includeReceiptRisk = true } =
   };
 }
 
+// Chức năng: Kiểm tra tính hợp lệ của (validateTracking - Tracking) phục vụ xử lý dữ liệu trong orderFulfillment.js
 export function validateTracking(item, values, reportDate) {
   const orderedQty = numberOrNull(values.orderedQty);
   const deliveredQty = numberOrNull(values.deliveredQty);
@@ -168,6 +231,7 @@ export function validateTracking(item, values, reportDate) {
   if (deliveredQty !== null && deliveredQty > safeReceivedQty + Number(item.tonDau || 0)) {
     throw new Error('Số đã giao vượt hàng có thể giao: tồn đầu + số đã về kho.');
   }
+  // Chức năng: Xử lý nghiệp vụ (date - date) phục vụ xử lý dữ liệu trong orderFulfillment.js
   const date = (value, label) => {
     if (!value || value === '—') return '';
     if (!parseBusinessDate(value)) throw new Error(`${label} không hợp lệ.`);
@@ -224,6 +288,7 @@ export function validateTracking(item, values, reportDate) {
   };
 }
 
+// Chức năng: Kiểm tra dòng đơn hàng có khớp với bộ lọc trạng thái tiến độ giao hàng đang chọn hay không
 export function matchesFulfillment(item, filter, reportDate) {
   const state = getFulfillment(item, reportDate, { includeReceiptRisk: filter !== 'late' });
   switch (filter) {
@@ -252,6 +317,7 @@ export function matchesFulfillment(item, filter, reportDate) {
   }
 }
 
+// Chức năng: Xử lý nghiệp vụ (fulfillmentSummary - Summary) phục vụ xử lý dữ liệu trong orderFulfillment.js
 export function fulfillmentSummary(items, reportDate) {
   const states = items.map(item => getFulfillment(item, reportDate));
   return {
@@ -264,17 +330,23 @@ export function fulfillmentSummary(items, reportDate) {
   };
 }
 
+// Chức năng: Chuẩn hóa danh sách dòng đơn hàng PO và tính toán các chỉ số phần trăm hoàn thành ban đầu
 export function loadTrackedItems(items = []) {
-  return (items || []).map(item => ({
-    ...EMPTY_ORDER_TRACKING,
-    ...item,
-    manualPriorityRank: item.manualPriorityRank ?? item.priorityRank ?? 2,
-    manualAlertReason: item.manualAlertReason || item.alertReason || '',
-    trackingHistory: item.trackingHistory || [],
-    trackingVersion: item.trackingVersion ?? null,
-  }));
+  return (items || []).map(item => {
+    const ownership = resolveOrderOwnership(item);
+    return {
+      ...EMPTY_ORDER_TRACKING,
+      ...item,
+      ...ownership,
+      manualPriorityRank: item.manualPriorityRank ?? item.priorityRank ?? 2,
+      manualAlertReason: item.manualAlertReason || item.alertReason || '',
+      trackingHistory: item.trackingHistory || [],
+      trackingVersion: item.trackingVersion ?? null,
+    };
+  });
 }
 
+// Chức năng: Lưu (saveTrackedItem - Tracked Item) phục vụ xử lý dữ liệu trong orderFulfillment.js
 export async function saveTrackedItem(rowId, payload) {
   const res = await updateOrderProgressApi(rowId, payload);
   return res.item;
@@ -282,6 +354,7 @@ export async function saveTrackedItem(rowId, payload) {
 
 export { dateInputValue };
 
+// Chức năng: Cập nhật (updateProgressRecord - Progress Record) phục vụ xử lý dữ liệu trong orderFulfillment.js
 export function updateProgressRecord(item, user, values, today) {
   if (!user?.permissions?.includes('orders.update') || user.status !== 'active') {
     throw new Error('Bạn không có quyền cập nhật tiến độ.');
@@ -290,7 +363,8 @@ export function updateProgressRecord(item, user, values, today) {
   if (!reason || reason.length > 500) {
     throw new Error('Cần lý do cập nhật, tối đa 500 ký tự.');
   }
-  const resolvedValues = { ...values };
+  const ownership = resolveOrderOwnership(item, values, user);
+  const resolvedValues = { ...values, ...ownership };
   if (values.progressMode === 'today') {
     const addNhap = numberOrNull(values.nhapToday !== undefined ? values.nhapToday : values.nhap);
     const addDelivered = numberOrNull(
@@ -306,6 +380,7 @@ export function updateProgressRecord(item, user, values, today) {
     resolvedValues.deliveredQty =
       addDelivered === null ? item.deliveredQty : Number(item.deliveredQty || 0) + addDelivered;
   }
+  // Chức năng: Xử lý nghiệp vụ (pctValue - Value) phục vụ xử lý dữ liệu trong orderFulfillment.js
   const pctValue = raw => {
     if (raw === '' || raw === null || raw === undefined) return null;
     const cleaned = String(raw)
@@ -364,10 +439,12 @@ export function updateProgressRecord(item, user, values, today) {
       packagingPct,
       receivedQty: tracking.nhap,
       deliveredQty: tracking.deliveredQty,
+      ...ownership,
     },
   };
   return {
     ...item,
+    ...ownership,
     ...tracking,
     onProcessPct,
     packagingPct,

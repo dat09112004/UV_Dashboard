@@ -23,6 +23,7 @@ export const SESSION_EXPIRED_EVENT = 'uv:session-expired';
 export const AUTH_SESSION_STORAGE_KEY = 'uv:auth-session-v1';
 export const LOGOUT_BROADCAST_KEY = 'uv:auth-logout-broadcast';
 
+// Chức năng: Phân tích (parseCrossTabLogoutPayload - Cross Tab Logout Payload) phục vụ xử lý dữ liệu trong api.js
 export function parseCrossTabLogoutPayload(rawValue) {
   if (!rawValue) return null;
   try {
@@ -79,6 +80,7 @@ export function decodeJwtPayload(jwtToken) {
   }
 }
 
+// Chức năng: Lấy mốc thời gian hết hạn (tính bằng mili-giây) từ chuỗi JWT Access/Refresh Token
 export function decodeJwtExpMs(jwtToken) {
   const payload = decodeJwtPayload(jwtToken);
   if (Number.isFinite(payload?.exp) && payload.exp > 0) {
@@ -87,6 +89,7 @@ export function decodeJwtExpMs(jwtToken) {
   return null;
 }
 
+// Chức năng: Làm sạch (clearExpiryWatchTimer - Expiry Watch Timer) phục vụ xử lý dữ liệu trong api.js
 function clearExpiryWatchTimer() {
   if (expiryTimerId !== null) {
     clearTimeout(expiryTimerId);
@@ -94,6 +97,7 @@ function clearExpiryWatchTimer() {
   }
 }
 
+// Chức năng: Kiểm tra quyền (canUseSessionRefresh - Use Session Refresh) phục vụ xử lý dữ liệu trong api.js
 function canUseSessionRefresh(now = Date.now()) {
   if (refreshExpiresAt > 0 && refreshExpiresAt <= now) return false;
   if (
@@ -149,6 +153,7 @@ function writePersistedAuthSession() {
   }
 }
 
+// Chức năng: Đọc thông tin metadata của phiên đăng nhập đang lưu trong sessionStorage
 export function getStoredAuthSession() {
   try {
     if (globalThis.localStorage && globalThis.localStorage !== globalThis.sessionStorage) {
@@ -206,6 +211,7 @@ export function computeProactiveRefreshDelayMs(now = Date.now()) {
   return Math.min(Math.max(baseTargetMs, backoffRemainingMs), 10 * 60 * 1000);
 }
 
+// Chức năng: Xử lý nghiệp vụ (scheduleSessionExpiryWatch - Session Expiry Watch) phục vụ xử lý dữ liệu trong api.js
 function scheduleSessionExpiryWatch(expectedVersion = sessionVersion) {
   clearExpiryWatchTimer();
   if (typeof globalThis.window === 'undefined' || (!authToken && !canUseSessionRefresh()) || expectedVersion !== sessionVersion) return;
@@ -247,6 +253,7 @@ function scheduleSessionExpiryWatch(expectedVersion = sessionVersion) {
   }, boundedDelay);
 }
 
+// Chức năng: Nạp (loadPersistedIdempotencyKeys - Persisted Idempotency Keys) phục vụ xử lý dữ liệu trong api.js
 function loadPersistedIdempotencyKeys() {
   try {
     const raw = globalThis.sessionStorage?.getItem?.(IDEMPOTENCY_STORAGE_KEY);
@@ -273,6 +280,7 @@ function loadPersistedIdempotencyKeys() {
   }
 }
 
+// Chức năng: Xử lý nghiệp vụ (persistIdempotencyKeys - Idempotency Keys) phục vụ xử lý dữ liệu trong api.js
 function persistIdempotencyKeys() {
   try {
     const now = Date.now();
@@ -297,6 +305,7 @@ function persistIdempotencyKeys() {
 
 loadPersistedIdempotencyKeys();
 
+// Chức năng: Xử lý nghiệp vụ (hydrateStoredSessionOnBoot - Stored Session On Boot) phục vụ xử lý dữ liệu trong api.js
 function hydrateStoredSessionOnBoot() {
   const stored = getStoredAuthSession();
   if (!stored) return;
@@ -315,6 +324,7 @@ function hydrateStoredSessionOnBoot() {
 
 hydrateStoredSessionOnBoot();
 
+// Chức năng: Xử lý nghiệp vụ (generateIdempotencyKey - Idempotency Key) phục vụ xử lý dữ liệu trong api.js
 function generateIdempotencyKey() {
   if (typeof globalThis.crypto?.randomUUID === 'function') {
     return globalThis.crypto.randomUUID();
@@ -333,10 +343,12 @@ function generateIdempotencyKey() {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
+// Chức năng: Xử lý nghiệp vụ (canonicalizeClientPath - Client Path) phục vụ xử lý dữ liệu trong api.js
 function canonicalizeClientPath(path = '') {
   return String(path || '').replace(/\?.*$/, '').replace(/\/+$/, '') || '/';
 }
 
+// Chức năng: Phân giải (resolveWriteIntentKey - Write Intent Key) phục vụ xử lý dữ liệu trong api.js
 function resolveWriteIntentKey(version, method, path, serializedBody, explicitKey) {
   if (explicitKey) return { intentSig: null, key: explicitKey };
   const canonicalPath = canonicalizeClientPath(path);
@@ -374,6 +386,7 @@ export function parseRetryAfterMs(responseOrHeader, fallbackMs = 300) {
   return fallbackMs;
 }
 
+// Chức năng: Tính toán (computeBackoffDelayMs - Backoff Delay Ms) phục vụ xử lý dữ liệu trong api.js
 function computeBackoffDelayMs(attempt, response, baseDelayMs = 200) {
   const retryAfter = parseRetryAfterMs(response, 0);
   if (retryAfter > 0) return retryAfter;
@@ -382,6 +395,7 @@ function computeBackoffDelayMs(attempt, response, baseDelayMs = 200) {
   return Math.min(5000, baseDelayMs * (2 ** exp) + jitter);
 }
 
+// Chức năng: Xử lý nghiệp vụ (waitWithAbort - With Abort) phục vụ xử lý dữ liệu trong api.js
 function waitWithAbort(waitMs, signal) {
   if (signal?.aborted) {
     return Promise.reject(
@@ -403,6 +417,7 @@ function waitWithAbort(waitMs, signal) {
   });
 }
 
+// Chức năng: Định dạng (formatRetryAtClock - Retry At Clock) phục vụ xử lý dữ liệu trong api.js
 function formatRetryAtClock(targetMs) {
   try {
     return new Intl.DateTimeFormat('vi-VN', {
@@ -416,11 +431,13 @@ function formatRetryAtClock(targetMs) {
   }
 }
 
+// Chức năng: Xử lý nghiệp vụ (configureApi - Api) phục vụ xử lý dữ liệu trong api.js
 export function configureApi({ baseURL, token } = {}) {
   if (baseURL) apiBaseUrl = baseURL.replace(/\/+$/, '');
   if (token !== undefined) authToken = token;
 }
 
+// Chức năng: Cập nhật Access Token vào bộ nhớ, lưu metadata phiên và kích hoạt bộ đếm tự động làm mới trước khi hết hạn
 export function setAuthToken(token, nextRefreshToken, meta = {}) {
   if (token !== undefined) {
     authToken = token;
@@ -493,14 +510,17 @@ export function updateSessionAccount(account) {
   writePersistedAuthSession();
 }
 
+// Chức năng: Lấy (getAuthToken - Auth Token) phục vụ xử lý dữ liệu trong api.js
 export function getAuthToken() {
   return authToken;
 }
 
+// Chức năng: Lấy (getRefreshToken - Refresh Token) phục vụ xử lý dữ liệu trong api.js
 export function getRefreshToken() {
   return refreshToken;
 }
 
+// Chức năng: Lấy (getAuthSessionMetadata - Auth Session Metadata) phục vụ xử lý dữ liệu trong api.js
 export function getAuthSessionMetadata() {
   return {
     token: authToken,
@@ -511,15 +531,18 @@ export function getAuthSessionMetadata() {
   };
 }
 
+// Chức năng: Lấy (getSessionVersion - Session Version) phục vụ xử lý dữ liệu trong api.js
 export function getSessionVersion() {
   return sessionVersion;
 }
 
+// Chức năng: Lấy (getSessionIdentityKey - Session Identity Key) phục vụ xử lý dữ liệu trong api.js
 export function getSessionIdentityKey() {
   const tokenTag = authToken ? String(authToken).slice(-16) : 'anon';
   return `${sessionVersion}:${tokenTag}`;
 }
 
+// Chức năng: Xóa sạch Access Token và metadata phiên đăng nhập khi người dùng đăng xuất hoặc phiên hết hạn
 export function clearAuthToken() {
   clearExpiryWatchTimer();
   authToken = null;
@@ -546,6 +569,7 @@ export function clearAuthToken() {
   setClientIdentity(null);
 }
 
+// Chức năng: Tạo mới (createPageAbortSignal - Page Abort Signal) phục vụ xử lý dữ liệu trong api.js
 export function createPageAbortSignal(pageScope = 'default') {
   const existing = activePageControllers.get(pageScope);
   if (existing) {
@@ -562,6 +586,7 @@ export function createPageAbortSignal(pageScope = 'default') {
   return controller?.signal;
 }
 
+// Chức năng: Xử lý nghiệp vụ (abortAllPageRequests - All Page Requests) phục vụ xử lý dữ liệu trong api.js
 export function abortAllPageRequests() {
   for (const controller of activePageControllers.values()) {
     try {
@@ -596,6 +621,7 @@ export async function refreshSession(version = sessionVersion) {
   }
   const retryId = pendingRefreshRetry.retryId;
 
+  // Chức năng: Xử lý nghiệp vụ (recordTransientBackoff - Transient Backoff) phục vụ xử lý dữ liệu trong api.js
   const recordTransientBackoff = (serverRetryAfterMs = 0) => {
     refreshTransientFailures += 1;
     const expDelay = Math.min(30000, 1500 * Math.pow(2, refreshTransientFailures - 1));
@@ -607,6 +633,7 @@ export async function refreshSession(version = sessionVersion) {
     return delayMs;
   };
 
+  // Chức năng: Xử lý nghiệp vụ (promise - promise) phục vụ xử lý dữ liệu trong api.js
   const promise = (async () => {
     let response;
     try {
@@ -680,6 +707,7 @@ export async function refreshSession(version = sessionVersion) {
   }
 }
 
+// Chức năng: Xử lý nghiệp vụ (ensureValidSessionToken - Valid Session Token) phục vụ xử lý dữ liệu trong api.js
 export async function ensureValidSessionToken() {
   const now = Date.now();
   if (refreshExpiresAt > 0 && now >= refreshExpiresAt) {
@@ -697,6 +725,7 @@ export async function ensureValidSessionToken() {
   return { status: 'ok', token: authToken };
 }
 
+// Chức năng: Hàm trung tâm gửi HTTP request lên Backend API: tự động đính kèm Bearer Token, Idempotency-Key và tự làm mới token khi gặp 401
 export async function apiRequest(
   method,
   path,
@@ -964,6 +993,7 @@ export async function logoutApi() {
     ? apiRequest('POST', '/auth/logout', bodyPayload)
     : Promise.resolve({ status: 200, data: { loggedOut: true } });
   clearAuthToken();
+  // Chức năng: Xử lý nghiệp vụ (broadcast - broadcast) phục vụ xử lý dữ liệu trong api.js
   const broadcast = serverRevoked => {
     try {
       globalThis.localStorage?.setItem?.(
@@ -990,11 +1020,13 @@ export async function logoutApi() {
   }
 }
 
+// Chức năng: Tải (fetchTermsPolicyApi - Terms Policy Api) phục vụ xử lý dữ liệu trong api.js
 export async function fetchTermsPolicyApi(signal) {
   const { data } = await apiRequest('GET', '/auth/terms-policy', undefined, { signal });
   return data;
 }
 
+// Chức năng: Xử lý nghiệp vụ (changePasswordApi - Password Api) phục vụ xử lý dữ liệu trong api.js
 export async function changePasswordApi(currentPassword, newPassword) {
   const { data } = await apiRequest('POST', '/auth/change-password', {
     currentPassword,
@@ -1011,11 +1043,13 @@ export async function changePasswordApi(currentPassword, newPassword) {
   return data;
 }
 
+// Chức năng: Tải (fetchBootstrapApi - Bootstrap Api) phục vụ xử lý dữ liệu trong api.js
 export async function fetchBootstrapApi(signal) {
   const { data } = await apiRequest('GET', '/directory/bootstrap', undefined, { signal });
   return data;
 }
 
+// Chức năng: Tải (fetchAccountsApi - Accounts Api) phục vụ xử lý dữ liệu trong api.js
 export async function fetchAccountsApi(params = {}, signal) {
   const qs = new URLSearchParams(
     Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== '')
@@ -1024,6 +1058,7 @@ export async function fetchAccountsApi(params = {}, signal) {
   return data;
 }
 
+// Chức năng: Tải (fetchTasksApi - Tasks Api) phục vụ xử lý dữ liệu trong api.js
 export async function fetchTasksApi(params = {}, signal) {
   const qs = new URLSearchParams(
     Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== '')
@@ -1032,6 +1067,7 @@ export async function fetchTasksApi(params = {}, signal) {
   return data;
 }
 
+// Chức năng: Tải (fetchRemindersApi - Reminders Api) phục vụ xử lý dữ liệu trong api.js
 export async function fetchRemindersApi(params = {}, signal) {
   const qs = new URLSearchParams(
     Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== '')
@@ -1040,6 +1076,7 @@ export async function fetchRemindersApi(params = {}, signal) {
   return data;
 }
 
+// Chức năng: Tải (fetchDashboardSummaryApi - Dashboard Summary Api) phục vụ xử lý dữ liệu trong api.js
 export async function fetchDashboardSummaryApi(params = {}, signal) {
   const qs = new URLSearchParams(
     Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== '')
@@ -1048,6 +1085,7 @@ export async function fetchDashboardSummaryApi(params = {}, signal) {
   return data;
 }
 
+// Chức năng: Tải (fetchAuditLogsApi - Audit Logs Api) phục vụ xử lý dữ liệu trong api.js
 export async function fetchAuditLogsApi(params = {}, signal) {
   const qs = new URLSearchParams(
     Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== '')
@@ -1056,6 +1094,7 @@ export async function fetchAuditLogsApi(params = {}, signal) {
   return data;
 }
 
+// Chức năng: Tải (fetchOrdersApi - Orders Api) phục vụ xử lý dữ liệu trong api.js
 export async function fetchOrdersApi(params = {}, signal) {
   const qs = new URLSearchParams(
     Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== '')
@@ -1064,6 +1103,7 @@ export async function fetchOrdersApi(params = {}, signal) {
   return data;
 }
 
+// Chức năng: Xử lý nghiệp vụ (previewOrderProgressApi - Order Progress Api) phục vụ xử lý dữ liệu trong api.js
 export async function previewOrderProgressApi(rowId, payload, signal) {
   const { data } = await apiRequest(
     'POST',
@@ -1071,6 +1111,19 @@ export async function previewOrderProgressApi(rowId, payload, signal) {
     payload,
     { signal }
   );
+  return data;
+}
+
+// Chức năng: Cập nhật (updateOrderProgressApi - Order Progress Api) phục vụ xử lý dữ liệu trong api.js
+// Chức năng: Lấy danh sách đơn giao hàng cho khách hàng (Form 2 riêng biệt)
+export async function fetchCustomerDeliveriesApi(signal) {
+  const { data } = await apiRequest('GET', '/orders/deliveries', undefined, { signal });
+  return data;
+}
+
+// Chức năng: Tạo Đơn giao hàng cho Khách hàng và tự động phát sinh Công nợ phải thu (AR)
+export async function createCustomerDeliveryApi(payload) {
+  const { data } = await apiRequest('POST', '/orders/deliveries', payload);
   return data;
 }
 
@@ -1083,6 +1136,7 @@ export async function updateOrderProgressApi(rowId, payload) {
   return data;
 }
 
+// Chức năng: Tải (fetchFinanceStateApi - Finance State Api) phục vụ xử lý dữ liệu trong api.js
 export async function fetchFinanceStateApi(params = {}, signal) {
   const qs = new URLSearchParams(
     Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== '')
@@ -1100,26 +1154,31 @@ export async function fetchReceivablesApi(params = {}, signal) {
   return data;
 }
 
+// Chức năng: Tải (fetchReceivableDetailApi - Receivable Detail Api) phục vụ xử lý dữ liệu trong api.js
 export async function fetchReceivableDetailApi(id, signal) {
   const { data } = await apiRequest('GET', `/finance/receivables/${encodeURIComponent(id)}`, undefined, { signal });
   return data;
 }
 
+// Chức năng: Tạo mới (createReceivableApi - Receivable Api) phục vụ xử lý dữ liệu trong api.js
 export async function createReceivableApi(payload) {
   const { data } = await apiRequest('POST', '/finance/receivables', payload);
   return data;
 }
 
+// Chức năng: Cập nhật (updateReceivableApi - Receivable Api) phục vụ xử lý dữ liệu trong api.js
 export async function updateReceivableApi(id, payload) {
   const { data } = await apiRequest('PATCH', `/finance/receivables/${encodeURIComponent(id)}`, payload);
   return data;
 }
 
+// Chức năng: Xóa (deleteReceivableApi - Receivable Api) phục vụ xử lý dữ liệu trong api.js
 export async function deleteReceivableApi(id, payload = {}) {
   const { data } = await apiRequest('DELETE', `/finance/receivables/${encodeURIComponent(id)}`, payload);
   return data;
 }
 
+// Chức năng: Tải (fetchPayablesApi - Payables Api) phục vụ xử lý dữ liệu trong api.js
 export async function fetchPayablesApi(params = {}, signal) {
   const qs = new URLSearchParams(
     Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== '')
@@ -1128,26 +1187,31 @@ export async function fetchPayablesApi(params = {}, signal) {
   return data;
 }
 
+// Chức năng: Tải (fetchPayableDetailApi - Payable Detail Api) phục vụ xử lý dữ liệu trong api.js
 export async function fetchPayableDetailApi(id, signal) {
   const { data } = await apiRequest('GET', `/finance/payables/${encodeURIComponent(id)}`, undefined, { signal });
   return data;
 }
 
+// Chức năng: Tạo mới (createPayableApi - Payable Api) phục vụ xử lý dữ liệu trong api.js
 export async function createPayableApi(payload) {
   const { data } = await apiRequest('POST', '/finance/payables', payload);
   return data;
 }
 
+// Chức năng: Cập nhật (updatePayableApi - Payable Api) phục vụ xử lý dữ liệu trong api.js
 export async function updatePayableApi(id, payload) {
   const { data } = await apiRequest('PATCH', `/finance/payables/${encodeURIComponent(id)}`, payload);
   return data;
 }
 
+// Chức năng: Xóa (deletePayableApi - Payable Api) phục vụ xử lý dữ liệu trong api.js
 export async function deletePayableApi(id, payload = {}) {
   const { data } = await apiRequest('DELETE', `/finance/payables/${encodeURIComponent(id)}`, payload);
   return data;
 }
 
+// Chức năng: Kiểm tra trạng thái (isFinanceSnapshotPayload - Finance Snapshot Payload) phục vụ xử lý dữ liệu trong api.js
 export function isFinanceSnapshotPayload(obj) {
   const candidate = obj?.finance && typeof obj.finance === 'object' ? obj.finance : obj;
   return Boolean(
@@ -1161,6 +1225,7 @@ export function isFinanceSnapshotPayload(obj) {
   );
 }
 
+// Chức năng: Xử lý nghiệp vụ (ensureFinanceSnapshotResult - Finance Snapshot Result) phục vụ xử lý dữ liệu trong api.js
 async function ensureFinanceSnapshotResult(rawResult) {
   if (isFinanceSnapshotPayload(rawResult)) {
     const fin = rawResult?.finance && isFinanceSnapshotPayload(rawResult.finance) ? rawResult.finance : rawResult;
@@ -1178,6 +1243,7 @@ async function ensureFinanceSnapshotResult(rawResult) {
   return rawResult;
 }
 
+// Chức năng: Thực thi (executeFinanceActionApi - Finance Action Api) phục vụ xử lý dữ liệu trong api.js
 export async function executeFinanceActionApi(action, payload) {
   let result;
   switch (action) {
@@ -1197,6 +1263,33 @@ export async function executeFinanceActionApi(action, payload) {
     }
     case 'delete-receivable': {
       result = await deleteReceivableApi(payload.id, payload);
+      break;
+    }
+    case 'submit-receivable': {
+      const { data } = await apiRequest(
+        'POST',
+        `/finance/receivables/${encodeURIComponent(payload.id)}/submit`,
+        payload
+      );
+      result = data;
+      break;
+    }
+    case 'review-receivable': {
+      const { data } = await apiRequest(
+        'POST',
+        `/finance/receivables/${encodeURIComponent(payload.id)}/review`,
+        payload
+      );
+      result = data;
+      break;
+    }
+    case 'confirm-receivable': {
+      const { data } = await apiRequest(
+        'POST',
+        `/finance/receivables/${encodeURIComponent(payload.id)}/confirm`,
+        payload
+      );
+      result = data;
       break;
     }
     case 'receipt': {
@@ -1264,6 +1357,7 @@ export async function executeFinanceActionApi(action, payload) {
   return ensureFinanceSnapshotResult(result);
 }
 
+// Chức năng: Thực thi (executeDirectoryOrTaskActionApi - Directory Or Task Action Api) phục vụ xử lý dữ liệu trong api.js
 export async function executeDirectoryOrTaskActionApi(action, payload) {
   switch (action) {
     case 'create-account':
@@ -1338,6 +1432,7 @@ export async function executeDirectoryOrTaskActionApi(action, payload) {
   }
 }
 
+// Chức năng: Tải (fetchTaskAttachmentApi - Task Attachment Api) phục vụ xử lý dữ liệu trong api.js
 export async function fetchTaskAttachmentApi(taskId, fileId) {
   const { data } = await apiRequest(
     'GET',
@@ -1346,6 +1441,7 @@ export async function fetchTaskAttachmentApi(taskId, fileId) {
   return data.file ?? data;
 }
 
+// Chức năng: Lưu (saveEntryBatchApi - Entry Batch Api) phục vụ xử lý dữ liệu trong api.js
 export async function saveEntryBatchApi(sheetId, rows) {
   try {
     const { data } = await apiRequest('POST', `/data-entry/sheets/${encodeURIComponent(sheetId)}/batch`, { rows });
@@ -1366,18 +1462,66 @@ export async function saveEntryBatchApi(sheetId, rows) {
   }
 }
 
+// Chức năng: Tải (fetchOrderDetailApi - Order Detail Api) phục vụ xử lý dữ liệu trong api.js
 export async function fetchOrderDetailApi(rowId, signal) {
   const { data } = await apiRequest('GET', `/orders/items/${encodeURIComponent(rowId)}`, undefined, { signal });
   return data.item;
 }
 
+// Chức năng: Đọc (readTaskDraftApi - Task Draft Api) phục vụ xử lý dữ liệu trong api.js
 export async function readTaskDraftApi(taskId, signal) {
   const { data } = await apiRequest('GET', `/operations/tasks/${encodeURIComponent(taskId)}/draft`, undefined, { signal });
   return data;
 }
 
+// Chức năng: Ghi (writeTaskDraftApi - Task Draft Api) phục vụ xử lý dữ liệu trong api.js
 export async function writeTaskDraftApi(taskId, note, expectedVersion) {
   const { data } = await apiRequest('PUT', `/operations/tasks/${encodeURIComponent(taskId)}/draft`, { note, expectedVersion });
+  return data;
+}
+
+
+// Chức năng: Gọi API Kế toán nhận xử lý hồ sơ Công nợ Phải thu / Phải trả từ Hàng chờ chung
+export async function claimDebtApi(debtType, id, expectedRevision) {
+  const seg = debtType === 'payables' ? 'payables' : 'receivables';
+  const { data } = await apiRequest('POST', `/finance/${seg}/${encodeURIComponent(id)}/claim`, { expectedRevision });
+  return data;
+}
+
+// Chức năng: Gọi API trả hồ sơ Công nợ Phải thu / Phải trả về Hàng chờ chung
+export async function releaseDebtApi(debtType, id, expectedRevision) {
+  const seg = debtType === 'payables' ? 'payables' : 'receivables';
+  const { data } = await apiRequest('POST', `/finance/${seg}/${encodeURIComponent(id)}/release`, { expectedRevision });
+  return data;
+}
+
+// Chức năng: Gọi API Ban Giám đốc phân công hoặc chuyển người phụ trách Công nợ Phải thu / Phải trả
+export async function assignDebtApi(debtType, id, assigneeId, expectedRevision) {
+  const seg = debtType === 'payables' ? 'payables' : 'receivables';
+  const { data } = await apiRequest('POST', `/finance/${seg}/${encodeURIComponent(id)}/assign`, { assigneeId: assigneeId || '', expectedRevision });
+  return data;
+}
+
+
+// Chức năng: Gọi API gửi yêu cầu chuyển giao hồ sơ công nợ cho kế toán khác kèm lý do
+export async function requestTransferDebtApi(debtType, id, { toUserId, reason, expectedRevision }) {
+  const seg = debtType === 'payables' ? 'payables' : 'receivables';
+  const { data } = await apiRequest('POST', `/finance/${seg}/${encodeURIComponent(id)}/transfer-request`, {
+    toUserId,
+    reason,
+    expectedRevision,
+  });
+  return data;
+}
+
+// Chức năng: Gọi API bên nhận xác nhận đồng ý hoặc từ chối nhận chuyển giao hồ sơ công nợ
+export async function respondTransferDebtApi(debtType, id, { accept, note = '', expectedRevision }) {
+  const seg = debtType === 'payables' ? 'payables' : 'receivables';
+  const { data } = await apiRequest('POST', `/finance/${seg}/${encodeURIComponent(id)}/transfer-respond`, {
+    accept: Boolean(accept),
+    note,
+    expectedRevision,
+  });
   return data;
 }
 

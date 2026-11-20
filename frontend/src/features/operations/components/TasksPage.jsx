@@ -1,26 +1,54 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { AlertTriangle, ArrowLeft, BellRing, CheckCircle2, ChevronRight, ClipboardList, ClipboardPlus, Lock, Paperclip, Plus, RotateCcw, Search, X } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, BellRing, Briefcase, CheckCircle2, ChevronRight, ClipboardList, ClipboardPlus, Lock, Package, Paperclip, Plus, RotateCcw, Search, UserCheck, X } from 'lucide-react';
 import { phrase, t, translate } from '../../../locales/i18n.js';
 import { useDebouncedValue } from '../../../hooks/useDebounce.js';
 import { useProgressivePagination } from '../../../hooks/useProgressivePagination.js';
 import ProgressivePaginationBar from '../../../components/common/ProgressivePaginationBar.jsx';
+import FormWindowDialog from '../../../components/common/FormWindowDialog.jsx';
 import { businessToday, dateInputValue, parseBusinessDate } from '../../../utils/business.js';
 import { readTaskDraftApi, writeTaskDraftApi } from '../../../services/api.js';
 import { readTaskAttachment } from '../../users/services/directoryService.js';
-import { canDiscussTask, canManageTask, canViewManagedTask, canWorkOnAssignedTask, encodeTaskFiles, FILE_ACCEPT, canReceiveTasks,
-  REMINDER_PENDING, taskStatusAt, TASK_ACTIVE, TASK_DEPARTMENTS, TASK_DONE, TASK_EXPIRED, TASK_EXPIRED_MESSAGE, TASK_NEW, TASK_REREVIEW, TASK_RETURNED, TASK_REVIEW } from '../services/taskWorkflow.js';
+import {
+  canDiscussTask,
+  canExecutiveAssignOrder,
+  canManageTask,
+  canReceiveTasks,
+  canViewManagedTask,
+  canWorkOnAssignedTask,
+  encodeTaskFiles,
+  FILE_ACCEPT,
+  isAccountantSelfOwnedFinance,
+  isSaleSelfOwnedOrder,
+  REMINDER_PENDING,
+  resolveAlertAssignmentInfo,
+  resolveTaskCategory,
+  taskStatusAt,
+  TASK_ACTIVE,
+  TASK_DEPARTMENTS,
+  TASK_DONE,
+  TASK_EXPIRED,
+  TASK_EXPIRED_MESSAGE,
+  TASK_NEW,
+  TASK_REREVIEW,
+  TASK_RETURNED,
+  TASK_REVIEW,
+} from '../services/taskWorkflow.js';
 
+// Chức năng: Lọc (filterTaskRows - Task Rows) phục vụ xử lý dữ liệu trong TasksPage.jsx
 export function filterTaskRows(rows, {
   statusFilter = 'all',
   searchQuery = '',
   assigneeFilter = 'all',
   deadlineFilter = 'all',
+  categoryFilter = 'all',
   accounts = [],
   today = businessToday(),
 } = {}) {
   const q = String(searchQuery ?? '').trim().toLowerCase();
   const todayDate = parseBusinessDate(today);
   return rows.filter(row => {
+    if (categoryFilter === 'order' && resolveTaskCategory(row) !== 'order') return false;
+    if (categoryFilter === 'external' && resolveTaskCategory(row) !== 'external') return false;
     if (statusFilter === 'alert-tasks') {
       if (!row.sourceAlert || [TASK_DONE, TASK_EXPIRED].includes(row.status)) return false;
     } else if (statusFilter !== 'all' && row.status !== statusFilter) {
@@ -66,51 +94,79 @@ export function filterTaskRows(rows, {
   });
 }
 
-function AssignmentFields({ people, task, today }) {
+// Chức năng: Thành phần giao diện (React Component AssignmentFields) hiển thị và xử lý tương tác người dùng trong TasksPage.jsx
+function AssignmentFields({ people, task, today, defaultRole = '' }) {
   const [scope, setScope] = useState('person');
   const departments = Object.entries(TASK_DEPARTMENTS);
+  const defaultAssignee = defaultRole
+    ? (people.find(p => p.role === defaultRole)?.id || people[0]?.id || '')
+    : (task?.assigneeId ?? '');
   return <>
     {!task && <label>{t('Phạm vi giao việc')}<select name="scope" value={scope} onChange={event => setScope(event.target.value)}>
       <option value="person">{t('Một nhân viên')}</option>
       <option value="department">{t('Toàn bộ phòng')}</option>
     </select></label>}
-    {scope === 'department' ? <label>{t('Phòng nhận việc')} <span className="required-mark" aria-hidden="true">*</span><select name="department" required defaultValue="">
+    {scope === 'department' ? <label>{t('Phòng nhận việc')} <span className="required-mark" aria-hidden="true">*</span><select name="department" required defaultValue={defaultRole || ''}>
       <option value="">{t('Chọn phòng nhận việc')}</option>
       {departments.map(([role, label]) => <option key={role} value={role}>{t(label)}</option>)}
-    </select></label> : <label>{t('Người phụ trách')} <span className="required-mark" aria-hidden="true">*</span><select name="assigneeId" defaultValue={task?.assigneeId ?? ''} required>
+    </select></label> : <label>{t('Người phụ trách')} <span className="required-mark" aria-hidden="true">*</span><select name="assigneeId" defaultValue={defaultAssignee} required>
       <option value="">{t('Chọn người phụ trách')}</option>
       {people.filter(person => !task?.department || person.role === task.department).map(person =>
         <option key={person.id} value={person.id}>{person.name} · {t(person.roleLabel)}</option>)}
     </select></label>}
-    <label>{t('Hạn hoàn thành')} <span className="required-mark" aria-hidden="true">*</span><input name="deadline" type="date" min={today} defaultValue={dateInputValue(task?.deadline)} required /></label>
+    <label>{t('Hạn hoàn thành')} <span className="required-mark" aria-hidden="true">*</span><input name="deadline" type="date" min={today} defaultValue={dateInputValue(task?.deadline) || today} required /></label>
   </>;
 }
 
+// Chức năng: Thành phần giao diện (React Component FileField) hiển thị và xử lý tương tác người dùng trong TasksPage.jsx
 function FileField({ label, required = false }) {
   return <label>{t(label)}{required && <> <span className="required-mark" aria-hidden="true">*</span></>}<input name="files" type="file" accept={FILE_ACCEPT} multiple required={required} />
-    <small className="management-note">{t('Tối đa 3 tệp và tổng dung lượng 1 MB mỗi lần gửi.')}</small></label>;
+    </label>;
 }
 
 const statuses = [TASK_NEW, TASK_ACTIVE, TASK_REVIEW, TASK_REREVIEW, TASK_RETURNED, TASK_DONE, TASK_EXPIRED];
+// Chức năng: Xử lý nghiệp vụ (taskTone - Tone) phục vụ xử lý dữ liệu trong TasksPage.jsx
 const taskTone = status => status === TASK_DONE ? 'done' : [TASK_RETURNED, TASK_EXPIRED].includes(status) ? 'returned' : undefined;
 
-
-export default function TasksPage({ tasks, reminders = [], accounts, actor, onAction, busy, managing, fileNames, reReviewOnly = false, onNavigate, alertDraft, onClearAlertDraft }) {
+// Chức năng: Trang Quản lý Giao việc (CEO/Admin) & Công việc của tôi (Sale/Kế toán): chia 2 khung Giao việc (Đơn hàng vs Việc bên ngoài) mở ở chế độ Cửa sổ (Modal Window) chuẩn responsive
+export default function TasksPage({
+  tasks,
+  reminders = [],
+  orderItems = [],
+  finance = null,
+  accounts,
+  actor,
+  onAction,
+  busy,
+  managing,
+  fileNames,
+  reReviewOnly = false,
+  onNavigate,
+  alertDraft,
+  onClearAlertDraft,
+}) {
   const [editingId, setEditingId] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
   const [filter, setFilter] = useState('all');
+  const [categoryFilter, setCategoryFilter] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [assigneeFilter, setAssigneeFilter] = useState('all');
   const [deadlineFilter, setDeadlineFilter] = useState('all');
 
+  // Chế độ cửa sổ (Modal Window) cho Khung 1 (Giao việc Đơn hàng PO) và Khung 2 (Giao việc Bên ngoài)
+  const [activeFrameWindow, setActiveFrameWindow] = useState(null);
+
   // Debounced search and filter values for smooth UI & API filtering
   const debouncedSearchQuery = useDebouncedValue(searchQuery, 300);
   const debouncedFilter = useDebouncedValue(filter, 150);
+  const debouncedCategoryFilter = useDebouncedValue(categoryFilter, 150);
   const debouncedAssigneeFilter = useDebouncedValue(assigneeFilter, 150);
   const debouncedDeadlineFilter = useDebouncedValue(deadlineFilter, 150);
 
   const [error, setError] = useState('');
   const [createError, setCreateError] = useState('');
+  const [orderFrameError, setOrderFrameError] = useState('');
+  const [externalFrameError, setExternalFrameError] = useState('');
   const [formVersion, setFormVersion] = useState(0);
   const [creating, setCreating] = useState(false);
   const [today, setToday] = useState(businessToday);
@@ -123,6 +179,23 @@ export default function TasksPage({ tasks, reminders = [], accounts, actor, onAc
   const [quickAssignScope, setQuickAssignScope] = useState('person');
   const [quickAssignNote, setQuickAssignNote] = useState('');
   const [quickAssignError, setQuickAssignError] = useState('');
+
+  // Khung 1 (Giao việc tới Đơn hàng): chỉ các đơn hàng do Sếp (CEO / Admin) tạo mới được giao việc
+  const executiveOrders = (orderItems || []).filter(item => canExecutiveAssignOrder(item));
+  const saleSelfOwnedOrders = (orderItems || []).filter(item => isSaleSelfOwnedOrder(item));
+  const accountantSelfOwnedFinance = [
+    ...(Array.isArray(finance?.revenue) ? finance.revenue.map(r => ({ ...r, financeDocType: "Doanh thu" })) : []),
+    ...(Array.isArray(finance?.receivables) ? finance.receivables.map(r => ({ ...r, financeDocType: "Phải thu AR" })) : []),
+    ...(Array.isArray(finance?.payables) ? finance.payables.map(r => ({ ...r, financeDocType: "Phải trả AP" })) : []),
+  ].filter(doc => isAccountantSelfOwnedFinance(doc));
+  const [selectedOrderRowId, setSelectedOrderRowId] = useState(() =>
+    String(executiveOrders[0]?.rowId || '')
+  );
+  const selectedExecutiveOrder =
+    executiveOrders.find(item => String(item.rowId) === String(selectedOrderRowId)) ||
+    executiveOrders[0] ||
+    null;
+
   const dialogRef = useRef(null);
   const detailRef = useRef(null);
   const errorRef = useRef(null);
@@ -132,13 +205,17 @@ export default function TasksPage({ tasks, reminders = [], accounts, actor, onAc
     .map(task => ({ ...task, status: taskStatusAt(task, today) }));
   const reReviewCount = visible.filter(task => task.status === TASK_REREVIEW).length;
   const queue = managing ? visible.filter(task => (task.status === TASK_REREVIEW) === reReviewOnly) : visible;
+  const orderTaskCount = queue.filter(task => resolveTaskCategory(task) === 'order').length;
+  const externalTaskCount = queue.filter(task => resolveTaskCategory(task) === 'external').length;
   const alertTasks = managing ? [] : queue.filter(task => task.sourceAlert && ![TASK_DONE, TASK_EXPIRED].includes(task.status));
   const pendingReminders = reminders.filter(r => r.status === REMINDER_PENDING);
+  const activeQuickReminder = pendingReminders.find(r => r.id === quickAssignReminderId) || null;
   const rows = filterTaskRows(queue, {
     statusFilter: debouncedFilter,
     searchQuery: debouncedSearchQuery,
     assigneeFilter: debouncedAssigneeFilter,
     deadlineFilter: debouncedDeadlineFilter,
+    categoryFilter: debouncedCategoryFilter,
     accounts,
     today,
   });
@@ -149,11 +226,17 @@ export default function TasksPage({ tasks, reminders = [], accounts, actor, onAc
     initialChunkSize: 6,
     stepSize: 6,
     pageSize: 12,
-    resetDeps: [debouncedFilter, debouncedSearchQuery, debouncedAssigneeFilter, debouncedDeadlineFilter],
+    resetDeps: [debouncedFilter, debouncedCategoryFilter, debouncedSearchQuery, debouncedAssigneeFilter, debouncedDeadlineFilter],
   });
   const pagedRows = pagination.visibleItems;
 
-  const hasExtraFilters = Boolean(searchQuery.trim() || assigneeFilter !== 'all' || deadlineFilter !== 'all' || filter !== 'all');
+  const hasExtraFilters = Boolean(
+    searchQuery.trim() ||
+    assigneeFilter !== 'all' ||
+    deadlineFilter !== 'all' ||
+    filter !== 'all' ||
+    categoryFilter !== 'all'
+  );
   const filterStatuses = managing ? statuses.filter(status => status !== TASK_REREVIEW) : statuses;
   const task = visible.find(row => row.id === selectedId);
   const detailId = task?.id;
@@ -167,6 +250,12 @@ export default function TasksPage({ tasks, reminders = [], accounts, actor, onAc
   const counts = Object.fromEntries(filterStatuses.map(status => [status, queue.filter(row => row.status === status).length]));
   const returnedCount = counts[TASK_RETURNED];
   const contactLabel = managing ? 'Người phụ trách' : 'Người giao việc';
+
+  useEffect(() => {
+    if (!selectedOrderRowId && executiveOrders.length > 0) {
+      setSelectedOrderRowId(String(executiveOrders[0].rowId));
+    }
+  }, [executiveOrders, selectedOrderRowId]);
 
   useEffect(() => {
     const refresh = () => setToday(businessToday());
@@ -206,6 +295,7 @@ export default function TasksPage({ tasks, reminders = [], accounts, actor, onAc
     };
   }, [detailId, actor?.id, canHandoverSelected]);
 
+  // Chức năng: Xử lý nghiệp vụ (persistDraft - Draft) phục vụ xử lý dữ liệu trong TasksPage.jsx
   const persistDraft = (session, note) => {
     session.pending++;
     const task = session.queue.catch(() => {}).then(async () => {
@@ -245,6 +335,7 @@ export default function TasksPage({ tasks, reminders = [], accounts, actor, onAc
 
   useEffect(() => { if (error) errorRef.current?.focus(); }, [error]);
 
+  // Chức năng: Mở (openTask - Task) phục vụ xử lý dữ liệu trong TasksPage.jsx
   const openTask = id => {
     setEditingId(null);
     setError('');
@@ -253,6 +344,7 @@ export default function TasksPage({ tasks, reminders = [], accounts, actor, onAc
     setSelectedId(id);
   };
 
+  // Chức năng: Xử lý nghiệp vụ (requestCloseDetail - Close Detail) phục vụ xử lý dữ liệu trong TasksPage.jsx
   const requestCloseDetail = () => {
     if (busy || draftStatus === 'saving') return;
     if (hasUnsentHandover) {
@@ -262,6 +354,7 @@ export default function TasksPage({ tasks, reminders = [], accounts, actor, onAc
     detailRef.current?.close();
   };
 
+  // Chức năng: Đóng (closeDraft - Draft) phục vụ xử lý dữ liệu trong TasksPage.jsx
   const closeDraft = async note => {
     const session = draftSession.current;
     if (!session) return;
@@ -279,19 +372,24 @@ export default function TasksPage({ tasks, reminders = [], accounts, actor, onAc
       setDraftStatus('failed');
     }
   };
+  // Chức năng: Xử lý nghiệp vụ (keepDraftAndClose - Draft And Close) phục vụ xử lý dữ liệu trong TasksPage.jsx
   const keepDraftAndClose = () => closeDraft(handoverDraft);
+  // Chức năng: Xử lý nghiệp vụ (discardDraftAndClose - Draft And Close) phục vụ xử lý dữ liệu trong TasksPage.jsx
   const discardDraftAndClose = () => closeDraft('');
 
+  // Chức năng: Xử lý nghiệp vụ (continueEditingDraft - Editing Draft) phục vụ xử lý dữ liệu trong TasksPage.jsx
   const continueEditingDraft = () => {
     setShowCloseDraftPrompt(false);
     requestAnimationFrame(() => handoverTextareaRef.current?.focus());
   };
 
+  // Chức năng: Xử lý sự kiện (handleHandoverDraftChange - Handover Draft Change) phục vụ xử lý dữ liệu trong TasksPage.jsx
   const handleHandoverDraftChange = event => {
     const nextValue = event.target.value;
     setHandoverDraft(nextValue);
   };
 
+  // Chức năng: Xử lý nghiệp vụ (submitQuickAssignFromReminder - Quick Assign From Reminder) phục vụ xử lý dữ liệu trong TasksPage.jsx
   const submitQuickAssignFromReminder = async (event, reminder) => {
     event.preventDefault();
     setQuickAssignError('');
@@ -313,6 +411,78 @@ export default function TasksPage({ tasks, reminders = [], accounts, actor, onAc
     }
   };
 
+  // Chức năng: Giao việc ở Khung 1 (Giao việc tới Đơn hàng do Sếp tạo cho nhân sự/phòng ban xử lý)
+  const submitOrderFrameTask = async event => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    setOrderFrameError('');
+    if (!selectedExecutiveOrder) {
+      setOrderFrameError('Không có đơn hàng do Sếp tạo để phân công.');
+      return;
+    }
+    if (isSaleSelfOwnedOrder(selectedExecutiveOrder)) {
+      setOrderFrameError('Đơn hàng do Sale tạo đã tự động thuộc quyền đảm nhận của Sale đó.');
+      return;
+    }
+    setCreating(true);
+    try {
+      const files = await encodeTaskFiles(data.getAll('files'));
+      const payload = {
+        ...Object.fromEntries(data),
+        files,
+        requiresFile: data.has('requiresFile'),
+        taskCategory: 'order',
+        orderRowId: selectedExecutiveOrder.rowId,
+        sourceAlert: {
+          type: 'orders',
+          id: `order-${selectedExecutiveOrder.rowId}`,
+          reference: selectedExecutiveOrder.poId,
+        },
+      };
+      const ok = await onAction('create-task', payload, setOrderFrameError);
+      if (ok) {
+        setFormVersion(v => v + 1);
+        setFilter('all');
+        setActiveFrameWindow(null);
+      }
+    } catch (err) {
+      setOrderFrameError(err.message);
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  // Chức năng: Giao việc ở Khung 2 (Giao những việc bên ngoài không gắn với đơn hàng PO)
+  const submitExternalFrameTask = async event => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    setExternalFrameError('');
+    setCreating(true);
+    try {
+      const files = await encodeTaskFiles(data.getAll('files'));
+      const payload = {
+        ...Object.fromEntries(data),
+        files,
+        requiresFile: data.has('requiresFile'),
+        taskCategory: 'external',
+      };
+      const ok = await onAction('create-task', payload, setExternalFrameError);
+      if (ok) {
+        form.reset();
+        setFormVersion(v => v + 1);
+        setFilter('all');
+        setActiveFrameWindow(null);
+      }
+    } catch (err) {
+      setExternalFrameError(err.message);
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  // Chức năng: Xử lý nghiệp vụ (submit - submit) phục vụ xử lý dữ liệu trong TasksPage.jsx
   const submit = async (event, action, id) => {
     event.preventDefault();
     const form = event.currentTarget;
@@ -337,7 +507,11 @@ export default function TasksPage({ tasks, reminders = [], accounts, actor, onAc
       const files = await encodeTaskFiles(data.getAll('files'));
       if (!await onAction(action, {
         ...Object.fromEntries(data), id, files, requiresFile: data.has('requiresFile'),
-        ...(isCreate && alertDraft && { sourceAlert: alertDraft.sourceAlert }),
+        ...(isCreate && alertDraft && {
+          sourceAlert: alertDraft.sourceAlert,
+          taskCategory: alertDraft.taskCategory || (alertDraft.sourceAlert?.type === 'orders' ? 'order' : 'external'),
+          orderRowId: alertDraft.orderRowId,
+        }),
       },
         reportError)) return;
       submitted = true;
@@ -371,6 +545,7 @@ export default function TasksPage({ tasks, reminders = [], accounts, actor, onAc
     }
   };
 
+  // Chức năng: Xử lý nghiệp vụ (review - review) phục vụ xử lý dữ liệu trong TasksPage.jsx
   const review = async approve => {
     setError('');
     const ok = await onAction('confirm', {
@@ -383,6 +558,7 @@ export default function TasksPage({ tasks, reminders = [], accounts, actor, onAc
     return ok;
   };
 
+  // Chức năng: Xử lý nghiệp vụ (download - download) phục vụ xử lý dữ liệu trong TasksPage.jsx
   const download = async (taskId, fileId) => {
     setError('');
     try {
@@ -401,6 +577,7 @@ export default function TasksPage({ tasks, reminders = [], accounts, actor, onAc
     }
   };
 
+  // Chức năng: Xử lý nghiệp vụ (filesFor - For) phục vụ xử lý dữ liệu trong TasksPage.jsx
   const filesFor = (task, ids) => (ids || []).map(id => <button key={id} className="row-detail-button" type="button"
     onClick={() => download(task.id, id)}>{t('Tải tệp')} · {fileNames[id] || id}</button>);
 
@@ -419,7 +596,7 @@ export default function TasksPage({ tasks, reminders = [], accounts, actor, onAc
           {alertDraft && <p className="assignment-wide task-alert-source">{t('Báo động đỏ')} · {alertDraft.sourceAlert.reference}</p>}
           <label className="assignment-wide">{t('Tên công việc')} <span className="required-mark" aria-hidden="true">*</span><input name="title" defaultValue={alertDraft?.title} required maxLength={160} /></label>
           <label className="assignment-wide">{t('Nội dung')} <span className="required-mark" aria-hidden="true">*</span><textarea name="description" defaultValue={alertDraft?.description} required maxLength={1000} /></label>
-          <label className="assignment-wide">{t('Ghi chú chỉ đạo (Note cho nhân viên / phòng ban)')}<input name="managerNote" maxLength={500} placeholder={t('Nhập ghi chú hoặc lưu ý đặc biệt cho người nhận việc…')} /></label>
+          <label className="assignment-wide">{t('Ghi chú chỉ đạo (Note cho nhân viên / phòng ban)')}<input name="managerNote" maxLength={500} /></label>
           <AssignmentFields people={people} today={today} />
           <FileField label="Tệp hướng dẫn" />
           <label className="assignment-wide task-file-required"><input name="requiresFile" type="checkbox" /> {t('Yêu cầu đính kèm tệp khi nộp kết quả')}</label>
@@ -430,6 +607,239 @@ export default function TasksPage({ tasks, reminders = [], accounts, actor, onAc
         </fieldset>
       </form>
     </dialog>}
+
+    {/* Cửa sổ Khung 1: Giao việc tới Đơn hàng (Ai xử lý) */}
+    <FormWindowDialog
+      open={Boolean(managing && !reReviewOnly && activeFrameWindow === 'order')}
+      title="Khung 1 · Giao việc tới Đơn hàng (Ai xử lý)"
+      subtitle="Phân công xử lý Đơn hàng PO do Sếp tạo"
+      size="lg"
+      busy={busy || creating}
+      onClose={() => setActiveFrameWindow(null)}
+    >
+      {executiveOrders.length > 0 ? (
+        <form
+          key={`order-frame-${selectedExecutiveOrder?.rowId || 'none'}-${formVersion}`}
+          className="workflow-form space-y-3"
+          onSubmit={submitOrderFrameTask}
+        >
+          {orderFrameError && <p className="profile-form-error" role="alert">{t(orderFrameError)}</p>}
+          <fieldset disabled={busy || creating} className="item-form-grid">
+            <label className="workflow-wide">
+              {t('Chọn đơn hàng PO do Sếp tạo cần giao xử lý')} <span className="required-mark" aria-hidden="true">*</span>
+              <select
+                value={selectedExecutiveOrder?.rowId || ''}
+                onChange={e => setSelectedOrderRowId(e.target.value)}
+              >
+                {executiveOrders.map(order => {
+                  const info = resolveAlertAssignmentInfo(
+                    { id: `order-${order.rowId}`, type: 'orders', reference: order.poId, data: order },
+                    tasks,
+                    accounts,
+                    reminders,
+                    today
+                  );
+                  return (
+                    <option key={order.rowId} value={order.rowId}>
+                      {order.poId} · {t(order.vendorItemNo)} ({order.vendorName}) — {info.isAssigned ? `Đã giao: ${info.assigneesText}` : 'Chưa giao người xử lý'}
+                    </option>
+                  );
+                })}
+              </select>
+            </label>
+            {selectedExecutiveOrder && (
+              <div className="workflow-wide px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-xs text-slate-700 flex flex-wrap justify-between gap-2">
+                <span>
+                  <strong>PO:</strong> {selectedExecutiveOrder.poId} · <strong>{t('Mặt hàng:')}</strong> {t(selectedExecutiveOrder.vendorItemNo)} · <strong>{t('SL đặt:')}</strong> {selectedExecutiveOrder.orderedQty} {selectedExecutiveOrder.unit}
+                </span>
+                <span>
+                  <strong>{t('Người tạo đơn:')}</strong> {selectedExecutiveOrder.createdByRole === 'Admin' || selectedExecutiveOrder.createdByName === 'Quản trị Demo' ? t('Ban Giám đốc') : (selectedExecutiveOrder.createdByName || 'Ban Giám đốc')}
+                </span>
+              </div>
+            )}
+            <label className="workflow-wide">
+              {t('Tên công việc xử lý đơn hàng')} <span className="required-mark" aria-hidden="true">*</span>
+              <input
+                name="title"
+                required
+                maxLength={160}
+                defaultValue={
+                  selectedExecutiveOrder
+                    ? `Xử lý đơn hàng PO ${selectedExecutiveOrder.poId} · ${selectedExecutiveOrder.vendorItemNo}`.slice(0, 160)
+                    : ''
+                }
+              />
+            </label>
+            <label className="workflow-wide">
+              {t('Nội dung xử lý đơn hàng')} <span className="required-mark" aria-hidden="true">*</span>
+              <textarea
+                name="description"
+                required
+                maxLength={1000}
+                rows={2}
+                defaultValue={
+                  selectedExecutiveOrder
+                    ? `Theo dõi tiến độ nhập kho, sản xuất và giao hàng cho đơn hàng ${selectedExecutiveOrder.poId} (${selectedExecutiveOrder.vendorItemNo} · NCC: ${selectedExecutiveOrder.vendorName}).`
+                    : ''
+                }
+              />
+            </label>
+            <AssignmentFields people={people} today={today} defaultRole="Sale" />
+            <label className="workflow-wide">
+              {t('Ghi chú chỉ đạo (Note cho người xử lý đơn hàng)')}
+              <input
+                name="managerNote"
+                maxLength={500}
+              />
+            </label>
+            <label className="workflow-wide task-file-required">
+              <input name="requiresFile" type="checkbox" /> {t('Yêu cầu đính kèm tệp khi nộp kết quả')}
+            </label>
+          </fieldset>
+          <div className="workflow-footer">
+            <button type="button" disabled={busy || creating} onClick={() => setActiveFrameWindow(null)}>
+              {t('Hủy')}
+            </button>
+            <button className="primary" type="submit" disabled={busy || creating}>
+              {t('Giao người xử lý đơn hàng')}
+            </button>
+          </div>
+        </form>
+      ) : (
+        <p className="management-note">
+          {t('Hiện chưa có đơn hàng nào do Sếp tạo chờ phân công.')}
+        </p>
+      )}
+    </FormWindowDialog>
+
+    {/* Cửa sổ Khung 2: Giao những việc bên ngoài */}
+    <FormWindowDialog
+      open={Boolean(managing && !reReviewOnly && activeFrameWindow === 'external')}
+      title="Khung 2 · Giao những việc bên ngoài"
+      subtitle="Phân công Công việc Điều hành & Tác vụ Bên ngoài"
+      size="lg"
+      busy={busy || creating}
+      onClose={() => setActiveFrameWindow(null)}
+    >
+      <form
+        key={`external-frame-${formVersion}`}
+        className="workflow-form space-y-3"
+        onSubmit={submitExternalFrameTask}
+      >
+        {externalFrameError && <p className="profile-form-error" role="alert">{t(externalFrameError)}</p>}
+        <fieldset disabled={busy || creating} className="item-form-grid">
+          <label className="workflow-wide">
+            {t('Tên công việc bên ngoài')} <span className="required-mark" aria-hidden="true">*</span>
+            <input
+              name="title"
+              required
+              maxLength={160}
+            />
+          </label>
+          <label className="workflow-wide">
+            {t('Nội dung công việc bên ngoài')} <span className="required-mark" aria-hidden="true">*</span>
+            <textarea
+              name="description"
+              required
+              maxLength={1000}
+              rows={2}
+            />
+          </label>
+          <AssignmentFields people={people} today={today} />
+          <label className="workflow-wide">
+            {t('Ghi chú chỉ đạo (Note cho nhân viên / phòng ban)')}
+            <input
+              name="managerNote"
+              maxLength={500}
+            />
+          </label>
+          <div className="workflow-wide">
+            <FileField label="Tệp hướng dẫn" />
+          </div>
+          <label className="workflow-wide task-file-required">
+            <input name="requiresFile" type="checkbox" /> {t('Yêu cầu đính kèm tệp khi nộp kết quả')}
+          </label>
+        </fieldset>
+        <div className="workflow-footer">
+          <button type="button" disabled={busy || creating} onClick={() => setActiveFrameWindow(null)}>
+            {t('Hủy')}
+          </button>
+          <button className="primary" type="submit" disabled={busy || creating}>
+            {t('Giao việc bên ngoài')}
+          </button>
+        </div>
+      </form>
+    </FormWindowDialog>
+
+    {/* Cửa sổ Giao việc nhanh từ Nhắc việc chờ xử lý */}
+    <FormWindowDialog
+      open={Boolean(managing && !reReviewOnly && activeQuickReminder)}
+      title="Giao việc nhanh từ nhắc việc"
+      subtitle={activeQuickReminder ? `${activeQuickReminder.reference} · ${activeQuickReminder.subject}` : ''}
+      size="md"
+      busy={busy}
+      onClose={() => setQuickAssignReminderId(null)}
+    >
+      {activeQuickReminder && (
+        <form className="workflow-form space-y-3" onSubmit={e => submitQuickAssignFromReminder(e, activeQuickReminder)}>
+          <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-xs text-slate-800 space-y-1">
+            <div>
+              <strong className="text-rose-700">[{activeQuickReminder.reference}]</strong>{' '}
+              <strong>{t(activeQuickReminder.subject)}</strong> · {t(activeQuickReminder.issue)}
+            </div>
+            <div>
+              <strong>{activeQuickReminder.senderName}:</strong> “{t(activeQuickReminder.message)}”
+            </div>
+          </div>
+          {quickAssignError && <p className="profile-form-error" role="alert">{t(quickAssignError)}</p>}
+          <fieldset disabled={busy} className="item-form-grid">
+            <label>
+              {t('Giao cho')}
+              <select name="scope" value={quickAssignScope} onChange={e => setQuickAssignScope(e.target.value)}>
+                <option value="person">{t('Nhân viên')}</option>
+                <option value="department">{t('Phòng ban')}</option>
+              </select>
+            </label>
+            {quickAssignScope === 'person' ? (
+              <label>
+                {t('Người phụ trách')} <span className="required-mark" aria-hidden="true">*</span>
+                <select name="assigneeId" required defaultValue={people[0]?.id || ''}>
+                  {people.map(p => <option key={p.id} value={p.id}>{p.name} · {t(p.roleLabel)}</option>)}
+                </select>
+              </label>
+            ) : (
+              <label>
+                {t('Phòng ban')} <span className="required-mark" aria-hidden="true">*</span>
+                <select name="department" required defaultValue={activeQuickReminder.alertType === 'orders' ? 'Sale' : 'Accountant'}>
+                  {Object.entries(TASK_DEPARTMENTS).map(([roleKey, label]) => <option key={roleKey} value={roleKey}>{t(label)}</option>)}
+                </select>
+              </label>
+            )}
+            <label className="workflow-wide">
+              {t('Tên công việc')} <span className="required-mark" aria-hidden="true">*</span>
+              <input name="title" required defaultValue={`Xử lý cảnh báo đỏ ${activeQuickReminder.reference} · ${activeQuickReminder.subject}`.slice(0, 160)} />
+            </label>
+            <label>
+              {t('Hạn hoàn thành')} <span className="required-mark" aria-hidden="true">*</span>
+              <input name="deadline" type="date" min={today} defaultValue={today} required />
+            </label>
+            <label className="workflow-wide">
+              {t('Ghi chú chỉ đạo (Note cho nhân viên / phòng ban)')}
+              <input name="managerNote" value={quickAssignNote} onChange={e => setQuickAssignNote(e.target.value)} />
+            </label>
+          </fieldset>
+          <div className="workflow-footer">
+            <button type="button" disabled={busy} onClick={() => setQuickAssignReminderId(null)}>
+              {t('Hủy')}
+            </button>
+            <button type="submit" disabled={busy} className="primary">
+              {t('Giao ngay')}
+            </button>
+          </div>
+        </form>
+      )}
+    </FormWindowDialog>
+
     <header className="page-heading task-page-heading">
       <div><p className="page-eyebrow">UYEN VU INTERNATIONAL</p>
         <h1>{t(reReviewOnly ? TASK_REREVIEW : managing ? 'Giao việc' : 'Công việc của tôi')}</h1></div>
@@ -447,6 +857,156 @@ export default function TasksPage({ tasks, reminders = [], accounts, actor, onAc
       </div>
     </header>
 
+    {managing && !reReviewOnly && (
+      <section
+        className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4"
+        aria-label={t('Hai khung giao việc điều hành: Đơn hàng và Việc bên ngoài')}
+      >
+        {/* KHUNG 1: GIAO VIỆC TỚI ĐƠN HÀNG AI XỬ LÝ */}
+        <article
+          className="analytics-card management-panel border-t-4 border-t-sky-700"
+          data-assignment-frame="order"
+        >
+          <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
+            <div>
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-sky-100 text-sky-900 text-xs font-bold">
+                <Package size={14} />
+                {t('Khung 1 · Giao việc tới Đơn hàng (Ai xử lý)')}
+              </span>
+              <h2 className="m-0 mt-1.5 text-base font-bold text-slate-900">
+                {t('Phân công xử lý Đơn hàng PO do Sếp tạo')}
+              </h2>
+            </div>
+            <div className="flex flex-wrap gap-1.5 text-xs">
+              <span className="px-2 py-1 rounded bg-sky-50 border border-sky-200 text-sky-900 font-semibold">
+                {t('Đơn Sếp tạo:')} <b>{executiveOrders.length}</b>
+              </span>
+              <span className="px-2 py-1 rounded bg-emerald-50 border border-emerald-200 text-emerald-900 font-semibold">
+                {t('Đơn Sale tự nhận:')} <b>{saleSelfOwnedOrders.length}</b>
+              </span>
+              {accountantSelfOwnedFinance.length > 0 && (
+                <span className="px-2 py-1 rounded bg-teal-50 border border-teal-200 text-teal-900 font-semibold">
+                  {t('Chứng từ Kế toán tự nhận:')} <b>{accountantSelfOwnedFinance.length}</b>
+                </span>
+              )}
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl bg-sky-50/70 border border-sky-200">
+            <span className="text-xs text-slate-700">
+              {executiveOrders.length > 0
+                ? phrase('Hiện có § đơn hàng PO do Sếp tạo có thể phân công người xử lý.', executiveOrders.length)
+                : t('Hiện chưa có đơn hàng nào do Sếp tạo chờ phân công.')}
+            </span>
+            <button
+              type="button"
+              disabled={busy || creating || executiveOrders.length === 0}
+              onClick={() => {
+                setOrderFrameError('');
+                setActiveFrameWindow('order');
+              }}
+              className="row-primary-button text-xs flex items-center gap-1.5"
+            >
+              <ClipboardPlus size={15} />
+              <span>{t('+ Mở cửa sổ Giao việc Đơn hàng')}</span>
+            </button>
+          </div>
+
+          {saleSelfOwnedOrders.length > 0 && (
+            <details className="mt-3 pt-3 border-t border-slate-200 text-xs" open>
+              <summary className="font-bold text-emerald-900 cursor-pointer flex items-center gap-1.5">
+                <UserCheck size={14} className="text-emerald-700 shrink-0" />
+                <span>
+                  {phrase('Đơn hàng do Sale tạo — Sale tự động nhận xử lý (§ đơn)', saleSelfOwnedOrders.length)}
+                </span>
+              </summary>
+              <ul className="mt-2 space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                {saleSelfOwnedOrders.map(order => (
+                  <li
+                    key={order.rowId}
+                    className="flex flex-wrap items-center justify-between gap-2 px-2.5 py-1.5 rounded bg-emerald-50/70 border border-emerald-200 text-emerald-950"
+                  >
+                    <span>
+                      <strong>{order.poId}</strong> · {t(order.vendorItemNo)} ({order.orderedQty} {order.unit})
+                    </span>
+                    <span className="italic font-semibold text-emerald-800">
+                      {t('Sale tạo & tự nhận:')} {order.assignedSaleName || order.createdByName || 'Phòng Sale'}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+          {accountantSelfOwnedFinance.length > 0 && (
+            <details className="mt-3 pt-3 border-t border-slate-200 text-xs" open>
+              <summary className="font-bold text-teal-900 cursor-pointer flex items-center gap-1.5">
+                <UserCheck size={14} className="text-teal-700 shrink-0" />
+                <span>
+                  {phrase('Chứng từ tài chính do Kế toán tạo — Kế toán tự động nhận xử lý (§ chứng từ)', accountantSelfOwnedFinance.length)}
+                </span>
+              </summary>
+              <ul className="mt-2 space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                {accountantSelfOwnedFinance.map(doc => (
+                  <li
+                    key={`${doc.financeDocType}-${doc.id || doc.docNo}`}
+                    className="flex flex-wrap items-center justify-between gap-2 px-2.5 py-1.5 rounded bg-teal-50/70 border border-teal-200 text-teal-950"
+                  >
+                    <span>
+                      <strong>{doc.docNo}</strong> · {t(doc.financeDocType)} ({doc.poId || "Độc lập"})
+                    </span>
+                    <span className="italic font-semibold text-teal-800">
+                      {t('Kế toán tạo & tự nhận:')} {doc.assignedAccountantName || doc.createdByName || doc.pic || 'Phòng Kế toán'}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </article>
+
+        {/* KHUNG 2: GIAO NHỮNG VIỆC BÊN NGOÀI */}
+        <article
+          className="analytics-card management-panel border-t-4 border-t-indigo-700 flex flex-col justify-between"
+          data-assignment-frame="external"
+        >
+          <div>
+            <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
+              <div>
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-indigo-100 text-indigo-900 text-xs font-bold">
+                  <Briefcase size={14} />
+                  {t('Khung 2 · Giao những việc bên ngoài')}
+                </span>
+                <h2 className="m-0 mt-1.5 text-base font-bold text-slate-900">
+                  {t('Phân công Công việc Điều hành & Tác vụ Bên ngoài')}
+                </h2>
+              </div>
+              <span className="px-2 py-1 rounded bg-indigo-50 border border-indigo-200 text-indigo-900 text-xs font-semibold">
+                {t('Việc bên ngoài đã giao:')} <b>{externalTaskCount}</b>
+              </span>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl bg-indigo-50/70 border border-indigo-200">
+              <span className="text-xs text-slate-700">
+                {t('Giao các công việc nội bộ, báo cáo, kiểm toán, đối soát hoặc tác vụ bên ngoài cho nhân sự / phòng ban.')}
+              </span>
+              <button
+                type="button"
+                disabled={busy || creating}
+                onClick={() => {
+                  setExternalFrameError('');
+                  setActiveFrameWindow('external');
+                }}
+                className="row-primary-button text-xs flex items-center gap-1.5"
+              >
+                <Plus size={15} />
+                <span>{t('+ Mở cửa sổ Giao việc Bên ngoài')}</span>
+              </button>
+            </div>
+          </div>
+        </article>
+      </section>
+    )}
+
     {managing && !reReviewOnly && pendingReminders.length > 0 && (
       <section className="analytics-card management-panel mb-4 border-l-4 border-l-amber-500 bg-amber-50/40" aria-label={t('Nhắc việc từ nhân viên chờ giao việc')}>
         <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
@@ -461,84 +1021,62 @@ export default function TasksPage({ tasks, reminders = [], accounts, actor, onAc
           </button>
         </div>
         <div className="space-y-2.5">
-          {pendingReminders.map(rem => {
-            const isOpen = quickAssignReminderId === rem.id;
-            return (
-              <div key={rem.id} className="p-3 rounded-xl bg-white border border-amber-200 shadow-2xs">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <span className="text-xs font-bold text-rose-700">[{rem.reference}]</span>{' '}
-                    <strong className="text-xs sm:text-sm text-slate-900">{t(rem.subject)}</strong>{' '}
-                    <span className="text-xs text-slate-600">· {t(rem.issue)}</span>
-                    <p className="text-xs text-slate-700 mt-1">
-                      <strong>{rem.senderName}:</strong> “{t(rem.message)}”
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    className="row-primary-button text-xs flex items-center gap-1"
-                    onClick={() => {
-                      setQuickAssignError('');
-                      setQuickAssignReminderId(isOpen ? null : rem.id);
-                    }}
-                  >
-                    <ClipboardPlus size={14} />
-                    <span>{t(isOpen ? 'Đóng giao nhanh' : 'Giao việc nhanh')}</span>
-                  </button>
+          {pendingReminders.map(rem => (
+            <div key={rem.id} className="p-3 rounded-xl bg-white border border-amber-200 shadow-2xs">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <span className="text-xs font-bold text-rose-700">[{rem.reference}]</span>{' '}
+                  <strong className="text-xs sm:text-sm text-slate-900">{t(rem.subject)}</strong>{' '}
+                  <span className="text-xs text-slate-600">· {t(rem.issue)}</span>
+                  <p className="text-xs text-slate-700 mt-1">
+                    <strong>{rem.senderName}:</strong> “{t(rem.message)}”
+                  </p>
                 </div>
-                {isOpen && (
-                  <form className="mt-3 pt-3 border-t border-slate-200 grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-end text-xs" onSubmit={e => submitQuickAssignFromReminder(e, rem)}>
-                    {quickAssignError && <p className="sm:col-span-12 text-rose-700 font-semibold" role="alert">{t(quickAssignError)}</p>}
-                    <label className="sm:col-span-2 flex flex-col gap-1 font-semibold">
-                      {t('Giao cho')}
-                      <select name="scope" value={quickAssignScope} onChange={e => setQuickAssignScope(e.target.value)} className="h-9 rounded border border-slate-300 px-2 bg-white">
-                        <option value="person">{t('Nhân viên')}</option>
-                        <option value="department">{t('Phòng ban')}</option>
-                      </select>
-                    </label>
-                    {quickAssignScope === 'person' ? (
-                      <label className="sm:col-span-3 flex flex-col gap-1 font-semibold">
-                        {t('Người phụ trách')}
-                        <select name="assigneeId" required defaultValue={people[0]?.id || ''} className="h-9 rounded border border-slate-300 px-2 bg-white">
-                          {people.map(p => <option key={p.id} value={p.id}>{p.name} · {t(p.roleLabel)}</option>)}
-                        </select>
-                      </label>
-                    ) : (
-                      <label className="sm:col-span-3 flex flex-col gap-1 font-semibold">
-                        {t('Phòng ban')}
-                        <select name="department" required defaultValue={rem.alertType === 'orders' ? 'Sale' : 'Accountant'} className="h-9 rounded border border-slate-300 px-2 bg-white">
-                          {Object.entries(TASK_DEPARTMENTS).map(([roleKey, label]) => <option key={roleKey} value={roleKey}>{t(label)}</option>)}
-                        </select>
-                      </label>
-                    )}
-                    <label className="sm:col-span-3 flex flex-col gap-1 font-semibold">
-                      {t('Tên công việc')}
-                      <input name="title" required defaultValue={`Xử lý cảnh báo đỏ ${rem.reference} · ${rem.subject}`.slice(0, 160)} className="h-9 rounded border border-slate-300 px-2 bg-white" />
-                    </label>
-                    <label className="sm:col-span-2 flex flex-col gap-1 font-semibold">
-                      {t('Hạn hoàn thành')}
-                      <input name="deadline" type="date" min={today} defaultValue={today} required className="h-9 rounded border border-slate-300 px-2 bg-white" />
-                    </label>
-                    <div className="sm:col-span-2 flex justify-end">
-                      <button type="submit" disabled={busy} className="w-full h-9 rounded bg-sky-700 hover:bg-sky-800 text-white font-bold cursor-pointer">
-                        {t('Giao ngay')}
-                      </button>
-                    </div>
-                    <label className="sm:col-span-12 flex flex-col gap-1 font-semibold">
-                      {t('Ghi chú chỉ đạo (Note cho nhân viên / phòng ban)')}
-                      <input name="managerNote" value={quickAssignNote} onChange={e => setQuickAssignNote(e.target.value)} placeholder={t('Nhập ghi chú hướng dẫn xử lý cho nhân viên hoặc phòng ban…')} className="h-9 rounded border border-slate-300 px-2.5 bg-white font-normal" />
-                    </label>
-                  </form>
-                )}
+                <button
+                  type="button"
+                  className="row-primary-button text-xs flex items-center gap-1"
+                  onClick={() => {
+                    setQuickAssignError('');
+                    setQuickAssignReminderId(rem.id);
+                  }}
+                >
+                  <ClipboardPlus size={14} />
+                  <span>{t('Giao việc nhanh')}</span>
+                </button>
               </div>
-            );
-          })}
+            </div>
+          ))}
         </div>
       </section>
     )}
 
     <section className="analytics-card management-panel" aria-labelledby="task-list-title">
-      <h2 id="task-list-title">{t(reReviewOnly ? 'Công việc đã nộp lại' : managing ? 'Công việc đã giao' : 'Danh sách công việc')}</h2>
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+        <h2 id="task-list-title" className="m-0">{t(reReviewOnly ? 'Công việc đã nộp lại' : managing ? 'Công việc đã giao' : 'Danh sách công việc')}</h2>
+        <div className="workflow-filter-tabs" role="group" aria-label={t('Lọc theo khung giao việc')}>
+          <button
+            type="button"
+            aria-pressed={categoryFilter === 'all'}
+            onClick={() => setCategoryFilter('all')}
+          >
+            {t('Tất cả')} ({queue.length})
+          </button>
+          <button
+            type="button"
+            aria-pressed={categoryFilter === 'order'}
+            onClick={() => setCategoryFilter('order')}
+          >
+            {t('Khung 1: Việc theo Đơn hàng PO')} ({orderTaskCount})
+          </button>
+          <button
+            type="button"
+            aria-pressed={categoryFilter === 'external'}
+            onClick={() => setCategoryFilter('external')}
+          >
+            {t('Khung 2: Việc bên ngoài')} ({externalTaskCount})
+          </button>
+        </div>
+      </div>
       {!managing && returnedCount > 0 && <div className="task-notice" data-tone="returned">
         <AlertTriangle size={18} aria-hidden="true" />
         <span>{t('Có công việc không đạt yêu cầu. Hãy chỉnh sửa và gửi duyệt lại trước hạn.')}</span>
@@ -579,7 +1117,6 @@ export default function TasksPage({ tasks, reminders = [], accounts, actor, onAc
               type="search"
               value={searchQuery}
               onChange={event => setSearchQuery(event.target.value)}
-              placeholder={t('Tìm theo tên việc, mã PO, người phụ trách…')}
               aria-label={t('Tìm theo tên việc, mã PO, người phụ trách')}
             />
           </span>
@@ -604,6 +1141,7 @@ export default function TasksPage({ tasks, reminders = [], accounts, actor, onAc
         </label>
         {hasExtraFilters && <button type="button" className="row-detail-button task-reset-filter" onClick={() => {
           setFilter('all');
+          setCategoryFilter('all');
           setSearchQuery('');
           setAssigneeFilter('all');
           setDeadlineFilter('all');
@@ -615,7 +1153,7 @@ export default function TasksPage({ tasks, reminders = [], accounts, actor, onAc
         <ClipboardList size={25} aria-hidden="true" />
         <p>{t(reReviewOnly ? 'Chưa có công việc đã nộp lại cần duyệt.' : 'Không có công việc ở trạng thái này.')}</p>
         {hasExtraFilters && <button type="button" className="row-detail-button"
-          onClick={() => { setFilter('all'); setSearchQuery(''); setAssigneeFilter('all'); setDeadlineFilter('all'); }}>{t('Xem tất cả công việc')}</button>}
+          onClick={() => { setFilter('all'); setCategoryFilter('all'); setSearchQuery(''); setAssigneeFilter('all'); setDeadlineFilter('all'); }}>{t('Xem tất cả công việc')}</button>}
       </div>}
       {rows.length > 0 && <>
         <div className="table-scroll task-table-frame"><table className="management-table task-table">
@@ -628,8 +1166,22 @@ export default function TasksPage({ tasks, reminders = [], accounts, actor, onAc
           <tbody>{pagedRows.map(row => {
             const contact = accounts.find(account => account.id === (managing ? row.assigneeId : row.assignerId));
             const hasFiles = row.fileIds?.length || row.submissions?.some(entry => entry.fileIds?.length);
+            const isOrderTask = resolveTaskCategory(row) === 'order';
             return <tr key={row.id} data-tone={taskTone(row.status)} onClick={() => openTask(row.id)}>
               <td className="task-summary">
+                <div className="flex flex-wrap items-center gap-1.5 mb-0.5">
+                  <span
+                    className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold ${
+                      isOrderTask
+                        ? 'bg-sky-100 text-sky-900 border border-sky-200'
+                        : 'bg-indigo-50 text-indigo-900 border border-indigo-200'
+                    }`}
+                  >
+                    {isOrderTask
+                      ? `${t('Khung 1 · Đơn hàng PO')}${row.sourceAlert?.reference ? ` (${row.sourceAlert.reference})` : ''}`
+                      : t('Khung 2 · Việc bên ngoài')}
+                  </span>
+                </div>
                 <button className="task-row-open" type="button" aria-haspopup="dialog">
                   {t(row.title)} <ChevronRight size={16} aria-hidden="true" />
                 </button>
@@ -641,7 +1193,7 @@ export default function TasksPage({ tasks, reminders = [], accounts, actor, onAc
                 </small>}
                 {Boolean(hasFiles) && <span className="task-attachment"><Paperclip size={13} aria-hidden="true" />{t('Có tệp đính kèm')}</span>}
               </td>
-              <td><span className="task-mobile-label">{t(contactLabel)}</span>{contact?.name || '—'}
+              <td><span className="task-mobile-label">{t(contactLabel)}</span>{contact?.role === 'Admin' || contact?.name === 'Quản trị Demo' ? t('Ban Giám đốc') : (contact?.name || '—')}
                 {row.department && <small>{t(TASK_DEPARTMENTS[row.department])}</small>}</td>
               <td><span className="task-mobile-label">{t('Hạn hoàn thành')}</span>{row.deadline}</td>
               <td><span className="task-mobile-label">{t('Trạng thái')}</span>
@@ -696,9 +1248,9 @@ export default function TasksPage({ tasks, reminders = [], accounts, actor, onAc
           {task.sourceAlert && <p className="task-alert-source">{t('Báo động đỏ')} · {task.sourceAlert.reference}</p>}
           <p>{t(task.description)}</p>
           {task.managerNote && <p className="italic text-xs text-sky-900 bg-sky-50 border border-sky-200 rounded px-2.5 py-1.5 my-2">{t('Ghi chú chỉ đạo:')} “{task.managerNote}”</p>}
-          <p className="management-note">{managing ? person?.name : assigner?.name} · {t('Hạn hoàn thành')} {task.deadline}
+          <p className="management-note">{managing ? person?.name : (assigner?.role === 'Admin' || assigner?.name === 'Quản trị Demo' ? t('Ban Giám đốc') : assigner?.name)} · {t('Hạn hoàn thành')} {task.deadline}
             {task.department && <> · {t(TASK_DEPARTMENTS[task.department])}</>}</p>
-          {managing && <p className="management-note">{t('Người giao việc')} · {assigner?.name || '—'}</p>}
+          {managing && <p className="management-note">{t('Người giao việc')} · {assigner?.role === 'Admin' || assigner?.name === 'Quản trị Demo' ? t('Ban Giám đốc') : (assigner?.name || '—')}</p>}
           {managing && !canManageSelected && <p className="management-note">{t('Chỉ người giao việc có thể duyệt hoặc đổi phân công.')}</p>}
           <div className="task-files">{filesFor(task, task.fileIds)}</div>
           {task.requiresFile && <p className="management-note">{t('Công việc này yêu cầu tệp kết quả.')}</p>}

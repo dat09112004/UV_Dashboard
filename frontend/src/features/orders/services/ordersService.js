@@ -1,5 +1,6 @@
 import { apiRequest, fetchOrdersApi } from '../../../services/api.js';
 
+// Chức năng: Tải một trang dữ liệu đơn hàng PO từ Backend API kèm theo con trỏ phân trang (cursor)
 export async function fetchOrdersPage(params = {}, signal) {
   const data = await fetchOrdersApi({ limit: 50, ...params }, signal);
   if (!data || !Array.isArray(data.items)) {
@@ -70,6 +71,7 @@ export async function fetchOrderCollection(signal, options = {}) {
   return items;
 }
 
+// Chức năng: Truy vấn lịch sử cập nhật tiến độ của danh sách dòng đơn hàng theo từng lô (tối đa 500 dòng/lần) có tự động thử lại khi 429
 export async function fetchOrderHistory(
   items,
   signal,

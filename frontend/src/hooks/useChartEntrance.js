@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 
+// Chức năng: React Custom Hook (useChartEntrance) quản lý trạng thái và tối ưu hiệu năng giao diện
 export function useChartEntrance() {
   const chartRef = useRef(null);
 

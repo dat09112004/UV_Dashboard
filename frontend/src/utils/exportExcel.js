@@ -113,10 +113,13 @@ function flattenRecordForExport(record) {
   return flat;
 }
 
+// Chức năng: Xuất dữ liệu đang xem (Đơn hàng, Doanh thu, Phải thu, Phải trả, Nhắc việc, Công việc) ra tệp Excel chuẩn tiếng Việt/Anh
 export async function exportExcel(tables, filters, language = getLanguage()) {
   const english = language === 'en';
   const languageIndex = english ? 1 : 0;
+  // Chức năng: Bản địa hóa thông báo (localize - localize) phục vụ xử lý dữ liệu trong exportExcel.js
   const localize = text => translate(text, language);
+  // Chức năng: Xử lý nghiệp vụ (cellValue - Value) phục vụ xử lý dữ liệu trong exportExcel.js
   const cellValue = (key, value) => {
     let resolved = value;
     if (key === 'type') resolved = eventNames[value]?.[languageIndex] ?? value;

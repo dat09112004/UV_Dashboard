@@ -35,7 +35,7 @@ test('the seeded documents support reconciliation, allocation, approval, payment
   let state = saveReceipt(seed, accountant, { ...receipt, customerName: 'Demo Retail B' }, BM41_REPORT_DATE);
   state = allocateReceipt(state, accountant, { receiptId: receipt.id, debtId: 'DEMO-AR-B1', amount: 4000000, date: BM41_REPORT_DATE }, BM41_REPORT_DATE);
   assert.equal(state.receivables.find(row => row.id === 'DEMO-AR-B1').remaining, 6000000);
-  state = reviewPayable(state, ceo, { id: 'DEMO-AP-03', approve: true, note: 'Test approval' }, BM41_REPORT_DATE);
+  state = reviewPayable(state, ceo, { id: 'DEMO-AP-03', approve: true, expectedProposalVersion: 1, note: 'Test approval' }, BM41_REPORT_DATE);
   assert.equal(state.payables.find(row => row.id === 'DEMO-AP-03').approvalState, AP_APPROVED);
   state = recordPayablePayment(state, accountant, {
     id: 'DEMO-AP-03', amount: 1000000, date: BM41_REPORT_DATE, reference: 'DEMO-TEST-CHI',

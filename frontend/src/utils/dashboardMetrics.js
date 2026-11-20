@@ -5,15 +5,20 @@ import { linkedItems } from './recordReferences.js';
 
 export const CATEGORIES = ['Garment', 'Recycle Bag', 'Volkswagen Ipin Touch Cable'];
 const DAY = 86400000;
+// Chức năng: Xử lý nghiệp vụ (sumBy - By) phục vụ xử lý dữ liệu trong dashboardMetrics.js
 export const sumBy = (rows, key) => rows.reduce((sum, row) => sum + (Number(row[key]) || 0), 0);
+// Chức năng: Định dạng (formatMoney - Money) phục vụ xử lý dữ liệu trong dashboardMetrics.js
 export const formatMoney = value => new Intl.NumberFormat(locale(), { maximumFractionDigits: 0 }).format(value || 0) + ' VND';
+// Chức năng: Định dạng (formatMillions - Millions) phục vụ xử lý dữ liệu trong dashboardMetrics.js
 export const formatMillions = value => new Intl.NumberFormat(locale(), { maximumFractionDigits: 2 }).format((value || 0) / 1000000) + t(' tr');
+// Chức năng: Định dạng (formatDate - Date) phục vụ xử lý dữ liệu trong dashboardMetrics.js
 export const formatDate = value => {
   const date = parseBusinessDate(value);
   return date ? new Intl.DateTimeFormat(locale(), { timeZone: 'UTC', day: '2-digit', month: '2-digit', year: 'numeric' }).format(date) : '—';
 };
 
-export function classifyDebt(record, reportDate) {
+// Chức năng: Phân loại (classifyDebt - Debt) phục vụ xử lý dữ liệu trong dashboardMetrics.js
+export function classifyDebt(record, reportDate, { debtType = null, orders = null } = {}) {
   const today = parseBusinessDate(reportDate);
   if (!today) throw new Error('Ngày theo dõi không hợp lệ.');
   const remaining = Math.max(0, Number(record.originalAmount || 0) + Number(record.adjustment || 0) - Number(record.allocatedPaid || 0));
@@ -25,11 +30,74 @@ export function classifyDebt(record, reportDate) {
   const warning = status === 'upcoming' && daysUntilDue <= 7;
   const agingBucket = status === 'overdue' ? `Quá hạn ${days <= 30 ? '1–30' : days <= 60 ? '31–60' : days <= 90 ? '61–90' : 'trên 90'} ngày` :
     ({ paid: 'Đã tất toán', unknown: 'Chưa xác định hạn', today: 'Đến hạn hôm nay', upcoming: 'Chưa đến hạn' })[status];
+  if (debtType === 'payables' && remaining > 0 && !record.isStandalone && record.approvalOrigin !== 'opening' && record.poId && String(record.poId).trim().toUpperCase() !== 'NGOAI-PO') {
+    if (record.awaitingFullReceipt === true) {
+      return {
+        ...record, remaining, overdueDays: 0, daysUntilDue: null, debtStatus: 'upcoming',
+        agingBucket: 'Chờ nhận đủ hàng NCC', urgency: 3, alertLevel: 'Đúng hạn', priorityRank: 2,
+        alertLabel: 'Chờ nhận đủ hàng từ NCC', awaitingFullReceipt: true,
+      };
+    }
+    const matchedOrders = Array.isArray(orders)
+      ? orders.filter(o =>
+          (record.poLineId != null && Number(o.rowId) === Number(record.poLineId)) ||
+          (record.poLineId == null && String(o.poId || '').trim().toUpperCase() === String(record.poId).trim().toUpperCase())
+        ).filter(o => Number(o.orderedQty || 0) > 0)
+      : [];
+    if (matchedOrders.length > 0) {
+      const isFullyReceived = matchedOrders.every(o => Number(o.nhap || 0) >= Number(o.orderedQty || 0));
+      if (!isFullyReceived) {
+        return {
+          ...record, remaining, overdueDays: 0, daysUntilDue: null, debtStatus: 'upcoming',
+          agingBucket: 'Chờ nhận đủ hàng NCC', urgency: 3, alertLevel: 'Đúng hạn', priorityRank: 2,
+          alertLabel: 'Chờ nhận đủ hàng từ NCC', awaitingFullReceipt: true,
+        };
+      }
+      const refDate = parseBusinessDate(record.fullReceiptDate) || parseBusinessDate(matchedOrders[0]?.lastUpdateDate) || parseBusinessDate(matchedOrders[0]?.expectedReceiptDate);
+      if (today && refDate) {
+        const redDue = new Date(refDate.getTime() + 5 * DAY);
+        const diffDays = Math.round((today - redDue) / DAY);
+        const redDueStr = `${String(redDue.getUTCDate()).padStart(2, '0')}/${String(redDue.getUTCMonth() + 1).padStart(2, '0')}/${redDue.getUTCFullYear()}`;
+        if (diffDays >= 0) {
+          const st = diffDays > 0 ? 'overdue' : 'today';
+          return {
+            ...record, dueDate: redDueStr, remaining, overdueDays: diffDays, daysUntilDue: -diffDays, debtStatus: st,
+            agingBucket: diffDays > 0 ? `Quá hạn ${diffDays <= 30 ? '1–30' : diffDays <= 60 ? '31–60' : diffDays <= 90 ? '61–90' : 'trên 90'} ngày` : 'Đến hạn hôm nay',
+            urgency: diffDays > 0 ? 0 : 1, alertLevel: 'Báo động đỏ', priorityRank: 0,
+            alertLabel: diffDays > 0 ? `Quá hạn ${diffDays} ngày (đủ hàng +5 ngày)` : 'Đến hạn thanh toán NCC (đủ hàng +5 ngày)',
+            awaitingFullReceipt: false,
+          };
+        }
+        const daysLeft = -diffDays;
+        const warn = daysLeft <= 2;
+        return {
+          ...record, dueDate: redDueStr, remaining, overdueDays: 0, daysUntilDue: daysLeft, debtStatus: 'upcoming',
+          agingBucket: 'Chưa đến hạn', urgency: 3, alertLevel: warn ? 'Cần xử lý' : 'Đúng hạn', priorityRank: warn ? 1 : 2,
+          alertLabel: `Đã đủ hàng · Còn ${daysLeft} ngày đến hạn báo đỏ`, awaitingFullReceipt: false,
+        };
+      }
+    } else if (record.redAlertDueDate) {
+      const redDue = parseBusinessDate(record.redAlertDueDate);
+      if (today && redDue) {
+        const diffDays = Math.round((today - redDue) / DAY);
+        if (diffDays < 0) {
+          const daysLeft = -diffDays;
+          const warn = daysLeft <= 2;
+          return {
+            ...record, dueDate: record.redAlertDueDate, remaining, overdueDays: 0, daysUntilDue: daysLeft, debtStatus: 'upcoming',
+            agingBucket: 'Chưa đến hạn', urgency: 3, alertLevel: warn ? 'Cần xử lý' : 'Đúng hạn', priorityRank: warn ? 1 : 2,
+            alertLabel: `Đã đủ hàng · Còn ${daysLeft} ngày đến hạn báo đỏ`, awaitingFullReceipt: false,
+          };
+        }
+      }
+    }
+  }
   return { ...record, remaining, overdueDays: Math.max(0, days), daysUntilDue, debtStatus: status,
     agingBucket, urgency: ({ overdue: 0, today: 1, unknown: 2, upcoming: 3, paid: 4 })[status], alertLevel: isRed ? 'Báo động đỏ' : warning ? 'Cần xử lý' : 'Đúng hạn', priorityRank: isRed ? 0 : warning ? 1 : 2,
     alertLabel: status === 'overdue' ? `Quá hạn ${days} ngày` : agingBucket };
 }
 
+// Chức năng: Phân loại (classifyProgress - Progress) phục vụ xử lý dữ liệu trong dashboardMetrics.js
 export function classifyProgress(record, reportDate, { includeReceiptRisk = true } = {}) {
   const today = parseBusinessDate(reportDate);
   if (!today) throw new Error('Ngày theo dõi không hợp lệ.');
@@ -64,17 +132,21 @@ export function classifyProgress(record, reportDate, { includeReceiptRisk = true
     overdueDays: Math.max(trackingLateDays, actualShip && !actualArrival ? Math.max(0, etaDays) : !actualShip && notReady ? Math.max(0, days) : 0) };
 }
 
+// Chức năng: Xử lý nghiệp vụ (debtSummary - Summary) phục vụ xử lý dữ liệu trong dashboardMetrics.js
 export function debtSummary(records) {
+  // Chức năng: Xử lý nghiệp vụ (amount - amount) phục vụ xử lý dữ liệu trong dashboardMetrics.js
   const amount = status => sumBy(records.filter(row => row.debtStatus === status), 'remaining');
   return { total: sumBy(records, 'remaining'), overdue: amount('overdue'), today: amount('today'),
     upcoming: amount('upcoming'), unknown: amount('unknown'), due: amount('overdue') + amount('today') };
 }
 
+// Chức năng: Xử lý nghiệp vụ (averageProgress - Progress) phục vụ xử lý dữ liệu trong dashboardMetrics.js
 function averageProgress(rows, field) {
   const measured = rows.filter(row => Number.isFinite(row[field]));
   return measured.length ? Math.round(sumBy(measured, field) / measured.length) : null;
 }
 
+// Chức năng: Tổng hợp (summarizeCategories - Categories) phục vụ xử lý dữ liệu trong dashboardMetrics.js
 export function summarizeCategories(items, revenue, receivables = [], categories = CATEGORIES) {
   return categories.map(category => {
     const rows = items.filter(row => row.category === category);
@@ -92,12 +164,15 @@ export function summarizeCategories(items, revenue, receivables = [], categories
   });
 }
 
+// Chức năng: Xây dựng (buildAlertQueue - Alert Queue) phục vụ xử lý dữ liệu trong dashboardMetrics.js
 export function buildAlertQueue(items, receivables, payables, { includeWarnings = false } = {}) {
+  // Chức năng: Xử lý nghiệp vụ (relevant - relevant) phục vụ xử lý dữ liệu trong dashboardMetrics.js
   const relevant = row => row.priorityRank === 0 || (includeWarnings && row.priorityRank === 1);
   const progress = items.filter(relevant).map(row => ({
     id: `order-${row.rowId}`, type: 'orders', label: row.vendorItemNo, reference: row.poId,
     partner: row.vendorName, date: row.shipDateEtd || (row.inboundOnly ? row.expectedReceiptDate : undefined), status: row.alertLabel, overdueDays: row.overdueDays, urgency: row.urgency, data: row,
   }));
+  // Chức năng: Xử lý nghiệp vụ (debtAlerts - Alerts) phục vụ xử lý dữ liệu trong dashboardMetrics.js
   const debtAlerts = (rows, type) => rows.filter(row => relevant(row) && row.remaining > 0).map(row => ({
     id: `${type}-${row.id}`, type, label: row.customerName || row.supplierName, reference: row.docNo,
     partner: row.sku, date: row.dueDate, status: row.alertLabel, amount: row.remaining,
@@ -107,6 +182,7 @@ export function buildAlertQueue(items, receivables, payables, { includeWarnings 
     .sort((a, b) => a.data.priorityRank - b.data.priorityRank || a.urgency - b.urgency || b.overdueDays - a.overdueDays || a.id.localeCompare(b.id));
 }
 
+// Chức năng: Xử lý nghiệp vụ (debtMatchesFilter - Matches Filter) phục vụ xử lý dữ liệu trong dashboardMetrics.js
 export function debtMatchesFilter(row, filter) {
   if (filter === 'due') return ['today', 'overdue'].includes(row.debtStatus);
   if (filter === 'red') return row.priorityRank === 0;
@@ -117,12 +193,14 @@ export function debtMatchesFilter(row, filter) {
   return filter === 'all' || row.debtStatus === filter;
 }
 
+// Chức năng: Kiểm tra khớp (matchesOrigin - Origin) phục vụ xử lý dữ liệu trong dashboardMetrics.js
 export function matchesOrigin(record, origin, items) {
   if (origin === 'Tất cả xuất xứ') return true;
   if (record.countryOfOrigin) return record.countryOfOrigin === origin;
   return linkedItems(record, items).some(item => item.countryOfOrigin === origin);
 }
 
+// Chức năng: Xử lý nghiệp vụ (monthlyRevenueSeries - Revenue Series) phục vụ xử lý dữ liệu trong dashboardMetrics.js
 export function monthlyRevenueSeries(records) {
   const actual = new Map();
   for (const record of records) {
@@ -137,8 +215,10 @@ export function monthlyRevenueSeries(records) {
   return rows.sort((a, b) => Number(a.month.slice(-4)) - Number(b.month.slice(-4)) || Number(a.month.slice(1, 3)) - Number(b.month.slice(1, 3)));
 }
 
+// Chức năng: So sánh (comparePriority - Priority) phục vụ xử lý dữ liệu trong dashboardMetrics.js
 export const comparePriority = (a, b) => a.priorityRank - b.priorityRank || (a.urgency ?? 3) - (b.urgency ?? 3) || (b.overdueDays || 0) - (a.overdueDays || 0);
 
+// Chức năng: Xử lý nghiệp vụ (revenueBreakdown - Breakdown) phục vụ xử lý dữ liệu trong dashboardMetrics.js
 export function revenueBreakdown(records, receivables) {
   const result = { revenueCollected: 0, revenueDue: 0, revenueUpcoming: 0, revenueUnclassified: 0 };
   for (const record of records) {
@@ -156,6 +236,7 @@ export function revenueBreakdown(records, receivables) {
   return result;
 }
 
+// Chức năng: Xây dựng (buildProfitabilitySeries - Profitability Series) phục vụ xử lý dữ liệu trong dashboardMetrics.js
 export function buildProfitabilitySeries(
   revenueRecords = [],
   items = [],

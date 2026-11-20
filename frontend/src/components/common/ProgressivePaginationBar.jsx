@@ -2,6 +2,7 @@ import React from 'react';
 import { ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
 import { phrase, t } from '../../locales/i18n.js';
 
+// Chức năng: Thanh phân trang kết hợp tải dần (progressive loading) và chọn trang cho bảng dữ liệu lớn
 export default function ProgressivePaginationBar({
   pagination,
   itemUnit = 'mục',

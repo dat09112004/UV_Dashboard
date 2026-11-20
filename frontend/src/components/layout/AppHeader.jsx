@@ -20,6 +20,7 @@ export const NAV_ITEMS = [
 
 const SECONDARY_IDS = new Set(['data-entry', 'users', 'tasks', 'assignments', 'reminders']);
 
+// Chức năng: Tách danh sách các mục trên thanh điều hướng thành nhóm hiển thị chính và menu thu gọn 'Thêm' khi màn hình hẹp
 export function splitNavigationItems(items, viewportWidth = 1440) {
   if (!Array.isArray(items) || items.length <= 5 || viewportWidth >= 1460) {
     return { primary: items || [], overflow: [] };
@@ -40,6 +41,7 @@ export function splitNavigationItems(items, viewportWidth = 1440) {
   return { primary, overflow };
 }
 
+// Chức năng: Hiển thị đồng hồ thời gian thực theo múi giờ Việt Nam (UTC+7) trên thanh tiêu đề
 function HeaderClock({ language }) {
   const [now, setNow] = useState(() => new Date());
   const formatter = useMemo(() => new Intl.DateTimeFormat(language === 'en' ? 'en-GB' : 'vi-VN', {
@@ -56,6 +58,7 @@ function HeaderClock({ language }) {
   </time>;
 }
 
+// Chức năng: Thanh tiêu đề điều hướng chính: hiển thị logo, đồng hồ múi giờ Việt Nam, menu phân hệ theo quyền RBAC và menu tài khoản
 export default function AppHeader({ language, activeSection, onNavigate, user, onLogout, onPasswordChanged, pendingRemindersCount = 0 }) {
   const trackRef = useRef(null);
   const moreMenuRef = useRef(null);
@@ -106,6 +109,7 @@ export default function AppHeader({ language, activeSection, onNavigate, user, o
     return () => observer.disconnect();
   }, [indicatorTarget, language, primaryItems.length, overflowItems.length]);
 
+  // Chức năng: Xử lý nghiệp vụ (select - select) phục vụ xử lý dữ liệu trong AppHeader.jsx
   const select = section => {
     setMoreOpen(false);
     onNavigate(section);

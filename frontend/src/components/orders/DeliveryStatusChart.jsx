@@ -5,6 +5,7 @@ import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 import { AlertTriangle, CheckCircle2, ChevronRight } from 'lucide-react';
 import { formatDate } from '../../utils/dashboardMetrics.js';
 
+// Chức năng: Biểu đồ tròn (Donut) thống kê tỷ lệ trạng thái giao hàng cho khách và phân nhóm rủi ro trễ hạn
 export default function DeliveryStatusChart({ analytics, filter, onSelect, onOpenItem }) {
   const { total, groups, risks, attention } = analytics;
   const chartRef = useChartEntrance();

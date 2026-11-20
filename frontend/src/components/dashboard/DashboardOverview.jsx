@@ -7,17 +7,26 @@ import FulfillmentTable from '../orders/FulfillmentTable.jsx';
 import { getRoleLayout, getSeverity, presentAlert } from '../../utils/dashboardPresentation.js';
 import AlertAssignmentLine from '../common/AlertAssignmentLine.jsx';
 
+// Chức năng: Thanh tóm tắt số lượng cảnh báo đỏ cần xử lý ngay ở đầu trang Tổng quan
 export function AttentionSummary({
   alerts, role, onNavigate, onOpenAlert, onAssignAlert, onRemindAlert,
   activeSection, canNavigate = () => true, tasks = [], accounts = [], reminders = [],
 }) {
-  const critical = alerts.filter(alert => alert.data.priorityRank === 0);
-  const warnings = alerts.filter(alert => alert.data.priorityRank === 1);
   const layout = getRoleLayout(role);
+  const roleScopedAlerts = alerts.filter(alert =>
+    layout.alertType === 'all'
+      ? true
+      : layout.alertType === 'finance'
+        ? alert.type !== 'orders'
+        : alert.type === layout.alertType
+  );
+  const critical = roleScopedAlerts.filter(alert => alert.data.priorityRank === 0);
+  const warnings = roleScopedAlerts.filter(alert => alert.data.priorityRank === 1);
   const sections = [['orders', 'Giao hàng'], ['receivables', 'Phải thu'], ['payables', 'Phải trả']];
-  const shownSections = sections.filter(([id]) => canNavigate(id));
+  const shownSections = sections.filter(([id]) => canNavigate(id) && (layout.alertType === 'all' || (layout.alertType === 'finance' ? id !== 'orders' : id === layout.alertType)));
   const selectedIndex = shownSections.findIndex(([id]) => id === activeSection);
-  const focus = critical.find(alert => layout.alertType === 'all' || (layout.alertType === 'finance' ? alert.type !== 'orders' : alert.type === layout.alertType)) || critical[0] || warnings[0];
+  const focus = critical[0] || warnings[0];
+  const focusIsSaleOwnedOrder = (focus?.type === 'orders' && (focus?.data?.ownerType === 'sale_self_owned' || focus?.data?.createdByRole === 'Sale')) || (['receivables', 'payables'].includes(focus?.type) && (focus?.data?.ownerType === 'accountant_self_owned' || focus?.data?.createdByRole === 'Accountant'));
   return <section className={`attention-summary ${critical.length ? 'critical' : warnings.length ? 'warning' : 'normal'}`} aria-label={t("Công việc ưu tiên")}>
     <span className="attention-icon">{focus ? <AlertTriangle size={23} /> : <CheckCircle2 size={23} />}</span>
     <div className="attention-copy">
@@ -27,7 +36,7 @@ export function AttentionSummary({
           <span><b>{focus.reference}</b> · {t(presentAlert(focus, role).subject)} · {t(presentAlert(focus, role).issue)}</span>
           {focus.data.priorityRank === 0 && (
             <AlertAssignmentLine
-              alertRef={{ id: focus.id, type: focus.type, reference: focus.reference }}
+              alertRef={{ id: focus.id, type: focus.type, reference: focus.reference, data: focus.data }}
               tasks={tasks}
               accounts={accounts}
               reminders={reminders}
@@ -47,12 +56,13 @@ export function AttentionSummary({
     </nav>}
     {focus && <div className="attention-actions">
       <button className="attention-open" onClick={() => onOpenAlert(focus)}>{t('Mở việc ưu tiên ')}<ArrowRight size={16} /></button>
-      {onAssignAlert && focus.data.priorityRank === 0 && <button className="row-detail-button alert-assignment-action"
+      {onAssignAlert && focus.data.priorityRank === 0 && !focusIsSaleOwnedOrder && <button className="row-detail-button alert-assignment-action"
         type="button" onClick={() => onAssignAlert(focus)}><ClipboardPlus size={15} aria-hidden="true" />{t('Giao việc')}</button>}
     </div>}
   </section>;
 }
 
+// Chức năng: Danh sách cảnh báo công việc dành cho Sale và Kế toán kèm nút bấm Nhắc việc sếp
 export function EmployeeAlertReminder({ alerts, role, onOpen, onRemindAlert, tasks = [], accounts = [], reminders = [] }) {
   if (!alerts.length) return null;
   return <details className="employee-alert-reminder" open>
@@ -68,7 +78,7 @@ export function EmployeeAlertReminder({ alerts, role, onOpen, onRemindAlert, tas
           </button>
         </div>
         <AlertAssignmentLine
-          alertRef={{ id: alert.id, type: alert.type, reference: alert.reference }}
+          alertRef={{ id: alert.id, type: alert.type, reference: alert.reference, data: alert.data }}
           tasks={tasks}
           accounts={accounts}
           reminders={reminders}
@@ -81,10 +91,11 @@ export function EmployeeAlertReminder({ alerts, role, onOpen, onRemindAlert, tas
   </details>;
 }
 
+// Chức năng: Hiển thị 4 thẻ chỉ số KPI trọng tâm (Mã hàng cần xử lý, Doanh thu ghi nhận, Phải thu đến hạn, Phải trả đến hạn)
 export function OverviewKpis({ items, revenue, ar, ap, onNavigate, role, canNavigate = () => true }) {
   const redCount = items.filter(row => row.priorityRank === 0).length;
   const cards = [
-    { id: 'revenue', label: 'Doanh thu ghi nhận', value: formatMoney(sumBy(revenue, 'netRevenue')), icon: TrendingUp, tone: 'teal', detail: `${revenue.length} chứng từ`, secondary: `Thực thu ${formatMillions(sumBy(revenue, 'cashCollected'))}` },
+    { id: 'revenue', label: 'Doanh thu thực tế (AR − AP)', value: formatMoney(sumBy(revenue, 'netRevenue') - (ap?.original ?? ap?.outstanding ?? 0)), icon: TrendingUp, tone: 'teal', detail: `Bán ra ${formatMillions(sumBy(revenue, 'netRevenue'))}`, secondary: `Thực thu ${formatMillions(sumBy(revenue, 'cashCollected'))}`, warning: (sumBy(revenue, 'netRevenue') - (ap?.original ?? ap?.outstanding ?? 0)) < 0 },
     { id: 'orders', filter: 'red', label: 'Mã hàng cần xử lý', value: `${redCount}`, unit: '/ ' + t(`${items.length} mã hàng`), icon: Package, tone: 'gold', detail: redCount ? `${redCount} báo động đỏ` : 'Không có báo động đỏ', secondary: `${new Set(items.map(row => row.category)).size} ngành hàng`, warning: redCount > 0 },
     { id: 'receivables', filter: 'due', label: 'Phải thu đến hạn', value: formatMoney(ar.due), icon: Wallet, tone: 'blue', detail: `Quá hạn ${formatMillions(ar.overdue)}`, secondary: `Hôm nay ${formatMillions(ar.today)}`, warning: ar.overdue > 0 },
     { id: 'payables', filter: 'due', label: 'Phải trả đến hạn', value: formatMoney(ap.due), icon: CreditCard, tone: 'purple', detail: `Quá hạn ${formatMillions(ap.overdue)}`, secondary: `Hôm nay ${formatMillions(ap.today)}`, warning: ap.overdue > 0 },
@@ -97,25 +108,45 @@ export function OverviewKpis({ items, revenue, ar, ap, onNavigate, role, canNavi
   </button>)}</section>;
 }
 
+// Chức năng: Khối danh sách cảnh báo ưu tiên cho phép CEO/Admin giao việc nhanh hoặc mở chi tiết chứng từ
 function PriorityAlerts({ alerts, onOpen, onAssignAlert, onRemindAlert, role, tasks = [], accounts = [], reminders = [] }) {
-  const [type, setType] = useState(getRoleLayout(role).alertType);
+  const defaultType = getRoleLayout(role).alertType;
+  const [type, setType] = useState(defaultType);
   const [level, setLevel] = useState('critical');
-  const scoped = alerts.filter(alert => type === 'all' || (type === 'finance' ? alert.type !== 'orders' : alert.type === type));
+  const roleScoped = alerts.filter(alert =>
+    defaultType === 'all'
+      ? true
+      : defaultType === 'finance'
+        ? alert.type !== 'orders'
+        : alert.type === defaultType
+  );
+  const effectiveType = defaultType === 'all'
+    ? type
+    : defaultType === 'finance'
+      ? (['finance', 'receivables', 'payables'].includes(type) ? type : 'finance')
+      : 'orders';
+  const scoped = roleScoped.filter(alert => effectiveType === 'all' || (effectiveType === 'finance' ? alert.type !== 'orders' : alert.type === effectiveType));
   const critical = scoped.filter(a => a.data.priorityRank === 0).length;
   const warning = scoped.filter(a => a.data.priorityRank === 1).length;
   const visible = scoped.filter(alert => level === 'all' || getSeverity(alert.data.priorityRank) === level);
+  const typeOptions = defaultType === 'all'
+    ? [['all', 'Tất cả công việc'], ['orders', 'Giao hàng & tiến độ'], ['finance', 'Tài chính (thu & trả)'], ['receivables', 'Công nợ phải thu'], ['payables', 'Công nợ phải trả']]
+    : defaultType === 'finance'
+      ? [['finance', 'Tài chính (thu & trả)'], ['receivables', 'Công nợ phải thu'], ['payables', 'Công nợ phải trả']]
+      : [['orders', 'Giao hàng & tiến độ']];
   return <section className="analytics-card priority-panel">
     <div className="panel-heading"><div><span className="panel-priority-tag">{visible.length ? <AlertTriangle size={13} /> : <CheckCircle2 size={13} />}{t(visible.length ? 'Cần hành động' : 'Theo dõi công việc')}</span><h2>{t("Công việc đang cảnh báo")}</h2></div><div className="alert-level-counts"><button className={critical > 0 ? 'critical' : 'empty'} onClick={() => setLevel('critical')}>{critical}{t(" đỏ")}</button><button className={warning > 0 ? 'warning' : 'empty'} onClick={() => setLevel('warning')}>{warning}{t(" theo dõi")}</button></div></div>
-    <div className="alert-controls"><label>{t("Nhóm công việc")}<select aria-label={t("Nhóm cảnh báo")} value={type} onChange={e => setType(e.target.value)}><option value="all">{t("Tất cả công việc")}</option><option value="orders">{t("Giao hàng & tiến độ")}</option><option value="finance">{t("Tài chính (thu & trả)")}</option><option value="receivables">{t("Công nợ phải thu")}</option><option value="payables">{t("Công nợ phải trả")}</option></select></label>
+    <div className="alert-controls"><label>{t("Nhóm công việc")}<select aria-label={t("Nhóm cảnh báo")} value={effectiveType} onChange={e => setType(e.target.value)}>{typeOptions.map(([val, lbl]) => <option key={val} value={val}>{t(lbl)}</option>)}</select></label>
       <label>{t("Mức cảnh báo")}<select aria-label={t("Mức cảnh báo")} value={level} onChange={e => setLevel(e.target.value)}><option value="critical">{t("Báo động đỏ")}</option><option value="warning">{t("Cần theo dõi")}</option><option value="all">{t("Tất cả mức")}</option></select></label></div>
     <div className="priority-list" tabIndex={0} aria-label={t(`${visible.length} công việc cảnh báo`)}>{visible.length ? visible.map(alert => {
       const view = presentAlert(alert, role);
+      const isSaleOwnedOrder = (alert.type === 'orders' && (alert.data?.ownerType === 'sale_self_owned' || alert.data?.createdByRole === 'Sale')) || (['receivables', 'payables'].includes(alert.type) && (alert.data?.ownerType === 'accountant_self_owned' || alert.data?.createdByRole === 'Accountant'));
       return <article key={alert.id} className={`work-alert ${view.severity}`}>
         <div className="work-alert-heading"><span className="work-alert-reference">{t(view.typeLabel)} · <strong>{alert.reference}</strong></span><span className="work-alert-status"><AlertTriangle size={12} />{t(view.issue)}</span></div>
         <h3>{t(view.subject)}</h3><p className="work-alert-partner" title={t(view.partner)}>{t(view.partner)}</p>
         {view.severity === 'critical' && (
           <AlertAssignmentLine
-            alertRef={{ id: alert.id, type: alert.type, reference: alert.reference }}
+            alertRef={{ id: alert.id, type: alert.type, reference: alert.reference, data: alert.data }}
             tasks={tasks}
             accounts={accounts}
             reminders={reminders}
@@ -127,15 +158,16 @@ function PriorityAlerts({ alerts, onOpen, onAssignAlert, onRemindAlert, role, ta
         {view.amount && <div className="work-alert-amount"><span>{t(alert.type === 'receivables' ? 'Còn phải thu' : 'Còn phải trả')}</span><strong>{view.amount}</strong></div>}
         <div className="work-alert-action"><p>{t(view.action)}</p><div className="work-alert-buttons">
           <button type="button" onClick={() => onOpen(alert)}>{t(view.button)}<ArrowRight size={14} /></button>
-          {onAssignAlert && view.severity === 'critical' && <button type="button" className="alert-assignment-action"
+          {onAssignAlert && view.severity === 'critical' && !isSaleOwnedOrder && <button type="button" className="alert-assignment-action"
             onClick={() => onAssignAlert(alert)}><ClipboardPlus size={14} aria-hidden="true" />{t('Giao việc')}</button>}
         </div></div>
       </article>;
-    }) : <div className="dashboard-empty"><CheckCircle2 size={28} /><strong>{t("Không có công việc ở nhóm này")}</strong><button className="text-action" onClick={() => { setType('all'); setLevel('all'); }}>{t("Xem tất cả cảnh báo")}</button></div>}</div>
+    }) : <div className="dashboard-empty"><CheckCircle2 size={28} /><strong>{t("Không có công việc ở nhóm này")}</strong><button className="text-action" onClick={() => { setType(defaultType); setLevel('all'); }}>{t("Xem tất cả cảnh báo")}</button></div>}</div>
     <div className="alert-list-footer">{visible.length}{t(" công việc · ")}{t(getRoleLayout(role).label)}</div>
   </section>;
 }
 
+// Chức năng: Bố cục trang Tổng quan điều hành: kết hợp thẻ KPI, biểu đồ xu hướng, danh sách cảnh báo đỏ và bảng tiến độ
 export default function DashboardOverview({
   items, categoryStats, ar, ap, alerts, monthlyData,
   onNavigate, onOpenItem, onOpenAlert, onAssignAlert, onRemindAlert, onResetFilters,

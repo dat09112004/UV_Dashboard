@@ -59,21 +59,25 @@ test('API client unwraps server responses and forwards pagination, abort signal 
 });
 
 test('server RBAC profiles open accounts and employee tasks and honor department menus', async () => {
-  const { canEditAccount, canOpenSection, homeSection, manageableRoles, navigationForRole } =
+  const { canEditAccount, canToggleAccountStatus, canOpenSection, homeSection, manageableRoles, navigationForRole } =
     await import('../src/utils/roles.js');
-  const ceo = { id: 'ceo', status: 'active', role: 'CEO', permissions: ['users.manage'] };
+  const ceo = { id: 'ceo', status: 'active', role: 'CEO', permissions: ['dashboard.read', 'tasks.assign'] };
   const admin = { id: 'admin', status: 'active', role: 'Admin', permissions: ['users.manage'] };
   const sale = { id: 'sale', status: 'active', role: 'Sale', permissions: ['orders.read', 'tasks.read', 'dashboard.read'],
     navigation: ['tasks', 'orders'] };
   assert.equal(canOpenSection(admin, 'users'), true);
-  assert.deepEqual(manageableRoles(ceo), ['Sale', 'Accountant', 'CEO']);
+  assert.equal(canOpenSection(ceo, 'users'), false);
+  assert.deepEqual(manageableRoles(ceo), []);
   assert.deepEqual(manageableRoles(admin), ['Sale', 'Accountant']);
   assert.equal(canEditAccount(admin, { id: 'another-ceo', role: 'CEO' }), false);
+  assert.equal(canEditAccount(ceo, { id: 'sale', role: 'Sale' }), false);
+  assert.equal(canToggleAccountStatus(ceo, { id: 'sale', role: 'Sale' }), false);
+  assert.equal(canToggleAccountStatus(admin, { id: 'ceo', role: 'CEO' }), true);
   assert.equal(canOpenSection(sale, 'tasks'), true);
   assert.equal(homeSection(sale), 'tasks');
   assert.equal(canOpenSection(sale, 'data-entry'), false);
   assert.equal(canOpenSection(sale, 'reminders'), false);
-  assert.deepEqual(navigationForRole('Sale'), ['orders', 'revenue', 'tasks', 'reminders', 'data-entry']);
+  assert.deepEqual(navigationForRole('Sale'), ['orders', 'tasks', 'reminders', 'data-entry']);
 });
 
 test('order reference links use the exact line and support regular PO codes', async () => {
@@ -858,12 +862,13 @@ test('QA01, QA12, QA14, QA16 v1.1.0 Regressions (FE Role Matrix, Multi-page PO R
 
   const activeCeo = { id: 'user-ceo', role: 'CEO', status: 'active' };
   const activeAdmin = { id: 'user-admin', role: 'Admin', status: 'active' };
-  assert.deepEqual(manageableRoles(activeCeo), ['Sale', 'Accountant', 'CEO']);
+  assert.deepEqual(manageableRoles(activeCeo), []);
   assert.deepEqual(manageableRoles(activeAdmin), ['Sale', 'Accountant']);
-  assert.equal(canEditAccount(activeCeo, { id: 'ceo-2', role: 'CEO', status: 'active' }), true);
+  assert.equal(canEditAccount(activeCeo, { id: 'ceo-2', role: 'CEO', status: 'active' }), false);
   assert.equal(canEditAccount(activeCeo, { id: 'user-ceo', role: 'CEO', status: 'active' }), false);
+  assert.equal(canEditAccount(activeAdmin, { id: 'u-sale', role: 'Sale', status: 'active' }), true);
   assert.equal(canEditAccount(activeAdmin, { id: 'admin-2', role: 'Admin', status: 'active' }), false);
-  assert.equal(canEditAccount({ ...activeCeo, status: 'inactive' }, { id: 'u-sale', role: 'Sale', status: 'active' }), false);
+  assert.equal(canEditAccount({ ...activeAdmin, status: 'inactive' }, { id: 'u-sale', role: 'Sale', status: 'active' }), false);
 
   const appSource = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
   // QA12: Uses fetchOrdersPage first and automatically calls fetchOrderCollection when firstPage.hasMore is true
@@ -1167,3 +1172,448 @@ test('F01, F02, D01 Báo cáo QA v1.1.0 Bản 3 Regressions (FE)', async t => {
   assert.match(nginxConf, /server_name\s+erp\.uyenvu-international\.com;/);
   assert.doesNotMatch(nginxConf, /server_name\s+[^;]*\s+uyenvu-international\.com/);
 });
+
+
+test('SEC-01, SEC-02, SEC-07, SEC-08 Security Audit Regressions (FE)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { initialFinanceState, recordPayable, submitPayable, reviewPayable } = await import('../src/utils/financeWorkflow.js');
+
+  const ceo = { id: 'user-ceo', role: 'CEO', status: 'active', permissions: ['payables.read', 'payables.submit', 'payables.approve'], navigation: ['payables'] };
+  const admin = { id: 'user-admin', role: 'Admin', status: 'active', permissions: ['payables.read', 'payables.submit', 'payables.approve'], navigation: ['payables'] };
+
+  // SEC-01 & SEC-02 in FE financeWorkflow
+  let state = initialFinanceState([], [], [], '2026-11-10');
+  state = recordPayable(state, ceo, {
+    docNo: 'AP-FE-SEC01',
+    vendorNo: '15000',
+    supplierName: 'Nhật Long Anh',
+    poId: 'UV-55151',
+    sku: 'Quần tây xanh',
+    category: 'Quần áo',
+    dueDate: '2026-11-25',
+    originalAmount: 40000000,
+  });
+  const apId = state.payables[0].id;
+  assert.throws(() => submitPayable(state, ceo, { id: apId, amount: 40000000, dueDate: '2026-11-25', note: 'Tự duyệt', approveDirectly: true }), /không được tự duyệt/);
+  state = submitPayable(state, ceo, { id: apId, amount: 40000000, dueDate: '2026-11-25', note: 'Trình lần 1' });
+  assert.equal(state.payables[0].proposalVersion, 1);
+  assert.throws(() => reviewPayable(state, ceo, { id: apId, approve: true, note: 'CEO tự duyệt' }), /không được tự duyệt/);
+  assert.throws(() => reviewPayable(state, admin, { id: apId, approve: true, note: 'Sai phiên bản', expectedProposalVersion: 2 }), /phiên bản mới/);
+  state = reviewPayable(state, admin, { id: apId, approve: true, note: 'Admin duyệt đúng bản v1', expectedProposalVersion: 1, expectedRequestedAmount: 40000000 });
+  assert.equal(state.payables[0].approvalState, 'Đã duyệt');
+
+  // SEC-07: nginx.vps.conf includes HSTS and CSP headers
+  const nginxConf = readFileSync(new URL('../nginx.vps.conf', import.meta.url), 'utf8');
+  assert.match(nginxConf, /Strict-Transport-Security/);
+  assert.match(nginxConf, /Content-Security-Policy/);
+
+  // BUILD-01 & DOS-01/02: package-lock.json has authentic npm registry versions (2.3.2 and 4.0.7) and nginx.vps.conf has limit_req_zone & limit_conn_zone
+  const lockObj = JSON.parse(readFileSync(new URL('../package-lock.json', import.meta.url), 'utf8'));
+  assert.equal(lockObj.packages['node_modules/picomatch'].version, '2.3.2');
+  assert.equal(lockObj.packages['node_modules/vite/node_modules/picomatch'].version, '4.0.7');
+  assert.equal(lockObj.packages['node_modules/tinyglobby/node_modules/picomatch'].version, '4.0.7');
+  assert.match(nginxConf, /limit_req_zone/);
+  assert.match(nginxConf, /limit_conn_zone/);
+});
+
+test('Sale auto-owns created order and TasksPage splits into 2 frames (Order assignment vs External tasks)', async () => {
+  const { updateProgressRecord, loadTrackedItems } = await import('../src/utils/orderFulfillment.js');
+  const {
+    applyTaskAction,
+    canExecutiveAssignOrder,
+    filterTaskRows,
+    isSaleSelfOwnedOrder,
+    resolveAlertAssignmentInfo,
+    resolveTaskCategory,
+  } = await import('../src/features/operations/services/taskWorkflow.js');
+  const { readEntryRows } = await import('../src/features/dataEntry/service.js');
+  const { ENTRY_SHEETS } = await import('../src/features/dataEntry/schema.js');
+
+  const saleUser = {
+    id: 'user-sale-1',
+    name: 'Lê Hương',
+    email: 'sale@uyenvu.vn',
+    role: 'Sale',
+    roleLabel: 'Phòng Sale',
+    status: 'active',
+    permissions: ['orders.read', 'orders.update', 'tasks.read', 'tasks.work'],
+    navigation: ['overview', 'orders', 'data-entry', 'tasks', 'reminders'],
+  };
+  const ceoUser = {
+    id: 'user-ceo-1',
+    name: 'Trần Quốc',
+    email: 'ceo@uyenvu.vn',
+    role: 'CEO',
+    roleLabel: 'CEO',
+    status: 'active',
+    permissions: ['orders.read', 'orders.update', 'tasks.assign', 'tasks.read'],
+    navigation: ['overview', 'orders', 'data-entry', 'assignments', 'reminders'],
+  };
+  const today = new Date().toISOString().slice(0, 10);
+
+  const saleOrderRaw = updateProgressRecord(
+    {
+      rowId: 101,
+      poId: 'UV-SALE-101',
+      vendorItemNo: 'Áo Khoác Dù',
+      vendorNo: '15000',
+      vendorName: 'Nhật Long Anh',
+      category: 'Quần Áo',
+      releasedPoDate: today,
+      unit: 'pcs',
+      orderedQty: 300,
+      nhap: 0,
+      deliveredQty: 0,
+      onProcessPct: 0,
+      packagingPct: 0,
+      trackingHistory: [],
+    },
+    saleUser,
+    { orderedQty: 300, unit: 'pcs', nhap: 0, deliveredQty: 0, onProcessPct: 0, packagingPct: 0, changeReason: 'Sale tạo đơn hàng mới' },
+    today
+  );
+
+  const ceoOrderRaw = updateProgressRecord(
+    {
+      rowId: 102,
+      poId: 'UV-CEO-102',
+      vendorItemNo: 'Quần Kaki',
+      vendorNo: '15000',
+      vendorName: 'Nhật Long Anh',
+      category: 'Quần Áo',
+      releasedPoDate: today,
+      unit: 'pcs',
+      orderedQty: 500,
+      nhap: 0,
+      deliveredQty: 0,
+      onProcessPct: 0,
+      packagingPct: 0,
+      trackingHistory: [],
+    },
+    ceoUser,
+    { orderedQty: 500, unit: 'pcs', nhap: 0, deliveredQty: 0, onProcessPct: 0, packagingPct: 0, changeReason: 'CEO tạo đơn hàng mới' },
+    today
+  );
+
+  const tracked = loadTrackedItems([saleOrderRaw, ceoOrderRaw]);
+  assert.equal(isSaleSelfOwnedOrder(tracked[0]), true);
+  assert.equal(canExecutiveAssignOrder(tracked[0]), false);
+  assert.equal(tracked[0].assignedSaleName, 'Lê Hương');
+
+  assert.equal(isSaleSelfOwnedOrder(tracked[1]), false);
+  assert.equal(canExecutiveAssignOrder(tracked[1]), true);
+
+  const saleAlertInfo = resolveAlertAssignmentInfo(
+    { id: 'order-101', type: 'orders', reference: 'UV-SALE-101', data: tracked[0] },
+    [],
+    [saleUser, ceoUser],
+    [],
+    today
+  );
+  assert.equal(saleAlertInfo.isAssigned, true);
+  assert.match(saleAlertInfo.italicLine, /Sale tạo & đảm nhận: Lê Hương/);
+
+  const ordersSheet = ENTRY_SHEETS.find(s => s.id === 'orders');
+  const entryRows = readEntryRows(ordersSheet, saleUser, {
+    items: tracked,
+    finance: {},
+    directory: { accounts: [saleUser, ceoUser], tasks: [], reminders: [] },
+  });
+  assert.match(entryRows[0].createdByLabel, /Lê Hương/);
+  assert.match(entryRows[0].ownerHandlerLabel, /Sale tự nhận đơn/);
+  assert.match(entryRows[1].ownerHandlerLabel, /Đơn Sếp tạo · Chờ giao việc/);
+
+  const dirState = { tasks: [], reminders: [], taskFiles: {} };
+  // Chặn Sếp giao lại đơn hàng do Sale tạo
+  assert.throws(() =>
+    applyTaskAction(
+      dirState,
+      [saleUser, ceoUser],
+      ceoUser,
+      'create-task',
+      {
+        scope: 'person',
+        assigneeId: saleUser.id,
+        title: 'Thử giao đơn của Sale',
+        description: 'Không được phép',
+        deadline: today,
+        taskCategory: 'order',
+        orderRowId: 101,
+        sourceAlert: { type: 'orders', id: 'order-101', reference: 'UV-SALE-101' },
+      },
+      new Date(),
+      tracked
+    )
+  );
+
+  // Sếp giao đơn hàng do Sếp tạo ở Khung 1
+  applyTaskAction(
+    dirState,
+    [saleUser, ceoUser],
+    ceoUser,
+    'create-task',
+    {
+      scope: 'person',
+      assigneeId: saleUser.id,
+      title: 'Xử lý đơn hàng PO UV-CEO-102',
+      description: 'Theo dõi nhập kho và giao hàng',
+      deadline: today,
+      taskCategory: 'order',
+      orderRowId: 102,
+      sourceAlert: { type: 'orders', id: 'order-102', reference: 'UV-CEO-102' },
+    },
+    new Date(),
+    tracked
+  );
+
+  // Sếp giao việc bên ngoài ở Khung 2
+  applyTaskAction(
+    dirState,
+    [saleUser, ceoUser],
+    ceoUser,
+    'create-task',
+    {
+      scope: 'person',
+      assigneeId: saleUser.id,
+      title: 'Chuẩn bị hồ sơ kiểm toán',
+      description: 'Việc bên ngoài không gắn với PO',
+      deadline: today,
+      taskCategory: 'external',
+    },
+    new Date(),
+    tracked
+  );
+
+  assert.equal(dirState.tasks.length, 2);
+  assert.equal(resolveTaskCategory(dirState.tasks[0]), 'order');
+  assert.equal(resolveTaskCategory(dirState.tasks[1]), 'external');
+  assert.equal(filterTaskRows(dirState.tasks, { categoryFilter: 'order', accounts: [saleUser, ceoUser], today }).length, 1);
+  assert.equal(filterTaskRows(dirState.tasks, { categoryFilter: 'external', accounts: [saleUser, ceoUser], today }).length, 1);
+});
+
+test("Accountant auto-owns financial records (Revenue, AR, AP) when Accountant creates them; Boss-created finance records can be assigned", async () => {
+  const { recordInvoice, createReceivable, recordPayable } = await import("../src/utils/financeWorkflow.js");
+  const { isAccountantSelfOwnedFinance, canExecutiveAssignFinance, resolveAlertAssignmentInfo, applyTaskAction } = await import("../src/features/operations/services/taskWorkflow.js");
+  const { businessToday } = await import("../src/utils/business.js");
+
+  const today = businessToday();
+  const accountantUser = { id: "user-accountant", name: "Phạm Lan", email: "ketoan@uyenvu.vn", role: "Accountant", roleLabel: "Phòng Kế toán", status: "active", permissions: ["revenue.create", "receivables.allocate", "payables.submit"] };
+  const ceoUser = { id: "user-ceo", name: "Trần Quốc", email: "ceo@uyenvu.vn", role: "CEO", roleLabel: "CEO", status: "active", permissions: ["revenue.create", "receivables.allocate", "payables.submit"] };
+
+  const poItems = [{
+    rowId: 501,
+    poId: "UV-FIN-501",
+    vendorNo: "15316",
+    vendorName: "Nhật Long Anh",
+    vendorItemNo: "Áo Sơ Mi Trắng",
+    category: "Quần Áo",
+    unit: "pcs",
+    orderedQty: 500,
+    nhap: 400,
+    deliveredQty: 200,
+    unitPriceVnd: 100000,
+    totalValueVnd: 50000000,
+  }];
+
+  let fin = { openingDate: today, revenue: [], receivables: [], receipts: [], allocations: [], payables: [], payments: [], payableSplitSources: [], audit: [] };
+  // 1. Accountant records invoice -> auto-owns both revenue and linked AR
+  fin = recordInvoice(fin, accountantUser, {
+    rowId: 501,
+    docNo: "HD-ACC-501",
+    customerName: "Công ty Minh Phát",
+    recordDate: today,
+    dueDate: today,
+    shippedQty: 100,
+    netRevenue: 15000000,
+    basis: "Nghiệm thu lô 1",
+  }, poItems, today);
+
+  const accRev = fin.revenue.find(r => r.docNo === "HD-ACC-501");
+  const accLinkedAr = fin.receivables.find(r => r.docNo === "HD-ACC-501");
+  assert.equal(accRev.ownerType, "accountant_self_owned");
+  assert.equal(accRev.assignedAccountantId, accountantUser.id);
+  assert.equal(accLinkedAr.ownerType, "accountant_self_owned");
+  assert.equal(accLinkedAr.assignedAccountantName, "Phạm Lan");
+  assert.equal(isAccountantSelfOwnedFinance(accLinkedAr), true);
+  assert.equal(canExecutiveAssignFinance(accLinkedAr), false);
+
+  // 2. Accountant creates standalone AR & AP -> auto-owns both and defaults PIC on AP
+  fin = createReceivable(fin, accountantUser, {
+    docNo: "AR-ACC-502",
+    customerName: "Khách Lẻ A",
+    dueDate: today,
+    originalAmount: 8000000,
+  }, poItems, today);
+  const accStandaloneAr = fin.receivables.find(r => r.docNo === "AR-ACC-502");
+  assert.equal(accStandaloneAr.ownerType, "accountant_self_owned");
+
+  fin = recordPayable(fin, accountantUser, {
+    docNo: "AP-ACC-503",
+    poId: "UV-FIN-501",
+    vendorNo: "15316",
+    supplierName: "Nhật Long Anh",
+    sku: "Áo Sơ Mi Trắng",
+    category: "Quần Áo",
+    dueDate: today,
+    originalAmount: 12000000,
+  }, poItems, today);
+  const accAp = fin.payables.find(p => p.docNo === "AP-ACC-503");
+  assert.equal(accAp.ownerType, "accountant_self_owned");
+  assert.equal(accAp.pic, "Phạm Lan");
+
+  const accAlertInfo = resolveAlertAssignmentInfo(
+    { id: `payables-${accAp.id}`, type: "payables", reference: accAp.docNo, data: accAp },
+    [],
+    [accountantUser, ceoUser],
+    [],
+    today
+  );
+  assert.equal(accAlertInfo.isAssigned, true);
+  assert.equal(accAlertInfo.isAccountantSelfOwned, true);
+  assert.ok(accAlertInfo.summaryText.includes("Kế toán tạo & đảm nhận: Phạm Lan"));
+
+  // Boss cannot reassign Accountant self-owned finance alert
+  const dirState = { tasks: [], taskFiles: {}, reminders: [] };
+  assert.throws(() =>
+    applyTaskAction(
+      dirState,
+      [accountantUser, ceoUser],
+      ceoUser,
+      "create-task",
+      {
+        scope: "person",
+        assigneeId: accountantUser.id,
+        title: "Thử giao đè AP của Kế toán",
+        description: "Không được phép",
+        deadline: today,
+        sourceAlert: { type: "payables", id: `payables-${accAp.id}`, reference: accAp.docNo, data: accAp },
+      },
+      new Date(),
+      poItems,
+      fin
+    )
+  );
+});
+
+test("UI Cleanups: No form placeholders, no Admin text in dataEntry tables, and bug report email dat.lt@uyenvu-international.com above logout", async () => {
+  const { readEntryRows } = await import("../src/features/dataEntry/service.js");
+  const { ENTRY_SHEETS } = await import("../src/features/dataEntry/schema.js");
+  const fsMod = await import("node:fs");
+  const menuSrc = fsMod.readFileSync(new URL("../src/features/auth/components/AccountMenu.jsx", import.meta.url), "utf8");
+  assert.ok(menuSrc.includes("Báo cáo lỗi vui lòng email:"));
+  assert.ok(menuSrc.includes("dat.lt@uyenvu-international.com"));
+  const bugIdx = menuSrc.indexOf("profile-menu-bug-report");
+  const logoutIdx = menuSrc.indexOf("profile-menu-footer");
+  assert.ok(bugIdx > 0 && logoutIdx > bugIdx, "Bug report email block must be positioned above the logout footer");
+
+  for (const rel of [
+    "../src/components/finance/FinanceForms.jsx",
+    "../src/components/finance/MoneyField.jsx",
+    "../src/features/dataEntry/DataEntryPage.jsx",
+    "../src/features/operations/components/TasksPage.jsx",
+    "../src/features/operations/components/RemindersPage.jsx",
+  ]) {
+    const code = fsMod.readFileSync(new URL(rel, import.meta.url), "utf8");
+    assert.equal(code.includes("placeholder="), false, `${rel} must not contain faint placeholder text`);
+  }
+
+  const ceoActor = { id: "user-ceo", name: "Trần Quốc", role: "CEO", status: "active", permissions: ["orders.read", "orders.write"], navigation: ["orders", "data-entry"] };
+  const ordersSheet = ENTRY_SHEETS.find(s => s.id === "orders");
+  const rows = readEntryRows(ordersSheet, ceoActor, {
+    items: [{ rowId: 1, poId: "PO-1", createdByRole: "Admin", createdByName: "Quản trị Demo", ownerType: "executive_created" }],
+    finance: {},
+    directory: { accounts: [], tasks: [], reminders: [] },
+  });
+  assert.equal(rows[0].createdByLabel.includes("Admin"), false);
+  assert.equal(rows[0].createdByLabel.includes("Quản trị"), false);
+});
+
+test('Pre-Deploy Audit v1.1.0 Ban 4 Regressions (FE): AP-01, DOS-01, DOS-02, BUILD-01, SUP-01', () => {
+  const pkgLock = fs.readFileSync(new URL('../package-lock.json', import.meta.url), 'utf8');
+  assert.ok(!pkgLock.includes('picomatch-4.0.8.tgz'), 'BUILD-01: package-lock.json must not reference non-existent picomatch@4.0.8');
+  assert.ok(pkgLock.includes('picomatch-4.0.7.tgz') && pkgLock.includes('picomatch-2.3.2.tgz'), 'BUILD-01/SUP-01: package-lock.json must use valid registry picomatch tarballs');
+
+  const nginxConf = fs.readFileSync(new URL('../nginx.vps.conf', import.meta.url), 'utf8');
+  assert.ok(nginxConf.includes('limit_req_zone') && nginxConf.includes('limit_conn_zone'), 'DOS-01: nginx.vps.conf must define limit_req_zone and limit_conn_zone');
+  assert.ok(nginxConf.includes('location = /api/v1/health') && nginxConf.includes('allow 127.0.0.1;') && nginxConf.includes('deny all;'), 'DOS-02: nginx.vps.conf must restrict /api/v1/health to loopback');
+
+  const fw = fs.readFileSync(new URL('../src/utils/financeWorkflow.js', import.meta.url), 'utf8');
+  assert.ok(fw.includes('AP_PROPOSAL_VERSION_REQUIRED') && fw.includes('AP_PROPOSAL_CONFLICT'), 'AP-01: FE financeWorkflow.js must enforce mandatory expectedProposalVersion');
+});
+
+test('Modal Window Data Entry, Hidden rowId, Unique PO Check & Typed Excel Template Regressions (FE)', async context => {
+  const { ENTRY_SHEETS, visibleSheetColumns } = await import('../src/features/dataEntry/schema.js');
+  const { inspectEntryCell, validateDraftRowsFrontend } = await import('../src/features/dataEntry/service.js');
+  const { downloadEntryWorkbook, getColumnFormatMetadata } = await import('../src/features/dataEntry/workbook.js');
+  const { default: ExcelJS } = await import('exceljs');
+
+  // 1. rowId ('Mã dòng PO') is hidden in visibleSheetColumns while all other business columns remain intact
+  const ordersSheet = ENTRY_SHEETS.find(s => s.id === 'orders');
+  const visibleCols = visibleSheetColumns([...ordersSheet.columns, ...(ordersSheet.extra || [])]);
+  assert.equal(visibleCols.some(c => c.key === 'rowId'), false, 'rowId must be hidden from UI and template');
+  for (const requiredKey of [
+    'poId', 'vendorItemNo', 'vendorNo', 'vendorName', 'category', 'countryOfOrigin',
+    'releasedPoDate', 'unit', 'orderedQty', 'unitPriceVnd', 'nhap', 'deliveredQty',
+    'onProcessPct', 'packagingPct', 'expectedReceiptDate', 'shipDateEtd', 'etaDate',
+    'actualShipDate', 'actualDeliveryDate', 'changeReason', 'createdByLabel', 'ownerHandlerLabel'
+  ]) {
+    assert.equal(visibleCols.some(c => c.key === requiredKey), true, `Column ${requiredKey} must be preserved`);
+  }
+
+  // 2. Frontend catches duplicate PO ID against existing orders and within draft rows
+  const existingOrders = [{ rowId: 1, poId: 'UV-55151', vendorItemNo: 'Quần tây xanh' }];
+  const dupExistingCell = inspectEntryCell('poId', 'uv-55151', {}, { sheetId: 'orders', existingOrders, draftPoCounts: ['uv-55151'] });
+  assert.match(dupExistingCell.error, /đã tồn tại/);
+
+  const dupDraftCell = inspectEntryCell('poId', 'UV-99999', {}, { sheetId: 'orders', existingOrders, draftPoCounts: ['uv-99999', 'uv-99999'] });
+  assert.match(dupDraftCell.error, /lặp lại/);
+
+  const draftIssues = validateDraftRowsFrontend(
+    ordersSheet,
+    [
+      { line: 2, values: { poId: 'UV-55151', vendorItemNo: 'Áo sơ mi', vendorNo: '15000', vendorName: 'NCC A', category: 'Quần áo', releasedPoDate: '2026-11-10', unit: 'pcs', orderedQty: '100' } },
+      { line: 3, values: { poId: 'UV-NEW-1', vendorItemNo: 'Áo khoác', vendorNo: '15000', vendorName: 'NCC A', category: 'Quần áo', releasedPoDate: '2026-11-10', unit: 'pcs', orderedQty: '200' } },
+      { line: 4, values: { poId: 'UV-NEW-1', vendorItemNo: 'Quần kaki', vendorNo: '15000', vendorName: 'NCC A', category: 'Quần áo', releasedPoDate: '2026-11-10', unit: 'pcs', orderedQty: '300' } },
+    ],
+    { items: existingOrders, finance: {} }
+  );
+  assert.equal(draftIssues.length, 2);
+  assert.match(draftIssues[0].message, /UV-55151.*đã tồn tại/);
+  assert.match(draftIssues[1].message, /UV-NEW-1.*trùng lặp/);
+
+  // 3. Excel template (rows = []) hides rowId, formats columns with numFmt & dataValidation, and adds Huong_dan_kieu_du_lieu sheet
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'document');
+  const { createObjectURL, revokeObjectURL } = URL;
+  context.after(() => {
+    URL.createObjectURL = createObjectURL;
+    URL.revokeObjectURL = revokeObjectURL;
+    if (descriptor) Object.defineProperty(globalThis, 'document', descriptor);
+    else delete globalThis.document;
+  });
+  let templateBlob;
+  URL.createObjectURL = blob => { templateBlob = blob; return 'blob:test-template'; };
+  URL.revokeObjectURL = () => {};
+  globalThis.document = { body: { append() {} }, createElement: () => ({ click() {}, remove() {} }) };
+
+  await downloadEntryWorkbook(ordersSheet, visibleSheetColumns(ordersSheet.columns), [], 'vi');
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(await templateBlob.arrayBuffer());
+  const poSheet = wb.getWorksheet('PO');
+  const guideSheet = wb.getWorksheet('Huong_dan_kieu_du_lieu');
+  assert.ok(poSheet, 'Template must contain PO worksheet');
+  assert.ok(guideSheet, 'Template must contain Huong_dan_kieu_du_lieu worksheet');
+  assert.equal(poSheet.getCell('A1').value, 'Mã PO', 'First column in PO template must be Mã PO (rowId hidden)');
+  assert.ok(getColumnFormatMetadata({ key: 'releasedPoDate', label: 'Ngày phát hành PO', type: 'date' }).numFmt.includes('yyyy-mm-dd'));
+
+  // 4. All data entry pages use FormWindowDialog modal window mode
+  for (const rel of [
+    '../src/features/dataEntry/DataEntryPage.jsx',
+    '../src/features/operations/components/RemindersPage.jsx',
+    '../src/features/operations/components/TasksPage.jsx',
+    '../src/features/users/components/AccountsPage.jsx',
+  ]) {
+    const src = fs.readFileSync(new URL(rel, import.meta.url), 'utf8');
+    assert.ok(src.includes('FormWindowDialog'), `${rel} must use FormWindowDialog for modal window data entry`);
+  }
+});
+
