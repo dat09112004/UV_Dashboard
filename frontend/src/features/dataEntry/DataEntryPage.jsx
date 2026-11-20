@@ -195,7 +195,7 @@ function QuickCreateOrderForm({ actor, existingItems, pending, onSaveDirect, onS
         <input type="date" value={values.expectedReceiptDate} onChange={e => { setValues(prev => ({ ...prev, expectedReceiptDate: e.target.value })); setTouched(p => ({ ...p, expectedReceiptDate: true })); }} onBlur={() => setTouched(p => ({ ...p, expectedReceiptDate: true }))} />
         {showErr('expectedReceiptDate') && <small className="field-hint is-error" role="alert">{t(errors.expectedReceiptDate)}</small>}
       </label>
-      <label>{t('ETA')}
+      <label>{t('Thời gian dự kiến đến (ETA)')}
         <input type="date" value={values.etaDate} onChange={e => setValues(prev => ({ ...prev, etaDate: e.target.value }))} />
       </label>
     </fieldset>
@@ -352,10 +352,10 @@ function QuickUpdateProgressForm({ existingItems, initialOrder, pending, onSaveD
         <input type="date" max={businessToday()} value={actualDeliveryDate} onChange={e => { setActualDeliveryDate(e.target.value); setTouched(p => ({ ...p, actualDeliveryDate: true })); }} />
         {touched.actualDeliveryDate && deliveryError && <small className="field-hint is-error" role="alert">{t(deliveryError)}</small>}
       </label>
-      <label>{t('ETD')}
+      <label>{t('Thời gian dự kiến xuất hàng (ETD)')}
         <input type="date" value={shipDateEtd} onChange={e => setShipDateEtd(e.target.value)} />
       </label>
-      <label>{t('ETA')}
+      <label>{t('Thời gian dự kiến đến (ETA)')}
         <input type="date" value={etaDate} onChange={e => setEtaDate(e.target.value)} />
       </label>
       <label>{t('Sản xuất (%)')}

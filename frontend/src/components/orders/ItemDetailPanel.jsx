@@ -204,7 +204,7 @@ export default function ItemDetailPanel({
       <div className="fulfillment-stage"><div className="stage-heading"><PackageCheck size={20} /><strong>{t("Đã về kho")}</strong></div><QuantityProgress label={t("Tỷ lệ đã về kho")} quantity={state.receivedQty} percent={state.receivedPct} unit={item.unit} tone={state.lateReceiptDays ? 'critical' : 'normal'} /><span>{t("Còn về: ")}{formatQuantity(state.remainingReceipt)} {item.unit}</span></div>
       <div className="fulfillment-stage"><div className="stage-heading"><Truck size={20} /><strong>{t("Đã giao khách")}</strong></div><QuantityProgress label={t("Tỷ lệ đã giao khách")} quantity={state.deliveredQty} percent={state.deliveredPct} unit={item.unit} tone={state.tone} /><span>{t(state.deliveredQty === null ? 'Chưa có xác nhận số lượng giao' : `Còn giao: ${formatQuantity(state.remainingDelivery)} ${item.unit}`)}</span></div>
     </section>
-    <section className="item-delivery-dates"><CalendarDays size={19} /><div><span>{t("Dự kiến về kho")}</span><strong>{formatDate(item.expectedReceiptDate)}</strong></div><div><span>{t("Xuất dự kiến (ETD)")}</span><strong>{formatDate(item.shipDateEtd)}</strong></div><div><span>{t("Giao dự kiến (ETA)")}</span><strong>{formatDate(item.etaDate)}</strong></div><div><span>{t("Giao xác nhận gần nhất")}</span><strong>{formatDate(item.actualDeliveryDate)}</strong></div><span className={`fulfillment-status ${state.tone}`}>{t(state.label)}</span></section>
+    <section className="item-delivery-dates"><CalendarDays size={19} /><div><span>{t("Dự kiến về kho")}</span><strong>{formatDate(item.expectedReceiptDate)}</strong></div><div><span>{t("Thời gian dự kiến xuất hàng (ETD)")}</span><strong>{formatDate(item.shipDateEtd)}</strong></div><div><span>{t("Thời gian dự kiến đến (ETA)")}</span><strong>{formatDate(item.etaDate)}</strong></div><div><span>{t("Giao xác nhận gần nhất")}</span><strong>{formatDate(item.actualDeliveryDate)}</strong></div><span className={`fulfillment-status ${state.tone}`}>{t(state.label)}</span></section>
     <div className="item-business-summary"><span>{t("Tồn đầu ")}<b>{formatQuantity(item.tonDau)} {item.unit}</b></span><span>{t("Số bán ")}<b>{formatQuantity(item.ban)} {item.unit}</b></span><span>{t("Sản xuất ")}<b>{formatPercent(item.onProcessPct)}</b>{t(" · Đóng gói ")}<b>{formatPercent(item.packagingPct)}</b></span>{showFinancials && <><span>{t("Doanh thu ")}<b>{formatMoney(financials.revenue)}</b></span><span>{t("Phải thu liên quan ")}<b>{formatMoney(financials.receivables)}</b></span><span>{t(financials.grouped ? 'Phải trả trên CT gộp' : 'Phải trả liên quan')} <b>{formatMoney(financials.payables)}</b></span></>}</div>
     {!canEdit && readOnlyReason && <div className="entry-warnings" role="status" style={{ marginTop: 12 }}><strong>{t('Chế độ chỉ xem')}:</strong> {readOnlyReason}</div>}
     {canEdit ? <form ref={formRef} className="item-progress-form" noValidate onSubmit={handleSubmit}>
@@ -319,7 +319,7 @@ export default function ItemDetailPanel({
             <input name="actualDeliveryDate" type="date" max={businessToday()} value={actualDeliveryDate} onChange={e => setActualDeliveryDate(e.target.value)} />
             {actualDeliveryError && <small className="field-hint is-error" role="alert">{t(actualDeliveryError)}</small>}
           </label>
-          <label>{t("Xuất dự kiến (ETD)")}
+          <label>{t("Thời gian dự kiến xuất hàng (ETD)")}
             <input name="shipDateEtd" type="date" value={shipDateEtd} onChange={e => setShipDateEtd(e.target.value)} />
             {etdError && <small className="field-hint is-error" role="alert">{t(etdError)}</small>}
           </label>
@@ -327,7 +327,7 @@ export default function ItemDetailPanel({
             <input name="actualShipDate" type="date" max={businessToday()} value={actualShipDate} onChange={e => setActualShipDate(e.target.value)} />
             {actualShipError && <small className="field-hint is-error" role="alert">{t(actualShipError)}</small>}
           </label>
-          <label>{t("Giao dự kiến (ETA)")}
+          <label>{t("Thời gian dự kiến đến (ETA)")}
             <input name="etaDate" type="date" value={etaDate} onChange={e => setEtaDate(e.target.value)} />
             {etaError && <small className="field-hint is-error" role="alert">{t(etaError)}</small>}
           </label>

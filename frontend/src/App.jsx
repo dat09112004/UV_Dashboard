@@ -1451,7 +1451,7 @@ export default function App() {
                       <th className="py-3 px-2.5 text-center">{t("Ngày phát hành PO")}</th>
                       <th className="py-3 px-3">{t("Sản xuất (%)")}</th>
                       <th className="py-3 px-3">{t("Đóng gói (%)")}</th>
-                      <th className="py-3 px-3 text-center">{t("Lịch xuất / giao (ETD / ETA)")}</th>
+                      <th className="py-3 px-3 text-center">{t("Thời gian dự kiến xuất / đến (ETD / ETA)")}</th>
                       <th className="py-3 px-2.5 text-right">{t("Tồn đầu")}</th>
                       <th className="py-3 px-2.5 text-right">{t("Nhập")}</th>
                       <th className="py-3 px-2.5 text-right">{t("Bán")}</th>
@@ -1523,7 +1523,7 @@ export default function App() {
                             <div className="font-bold text-slate-800">
                               ETD: {row.shipDateEtd}
                             </div>
-                            <div className="text-[11px] text-slate-500">ETA: {row.etaDate}</div>
+                            <div className="text-[11px] text-slate-500">{t("Dự kiến đến (ETA): ")}{row.etaDate}</div>
                           </td>
                           <td className="py-3 px-2.5 text-right font-mono text-slate-700">
                             {row.tonDau ? row.tonDau.toLocaleString(locale()) : '-'}
