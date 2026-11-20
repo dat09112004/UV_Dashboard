@@ -150,9 +150,11 @@ export default function App() {
   const fullReport = canReadOrdersData && showRevenue && showReceivables && showPayables;
   const [selectedSection, setActiveSection] = useState(() => {
     try {
-      const fromHash = String(window.location.hash || '').replace(/^#\/?/, '').trim();
       const fromStorage = window.sessionStorage?.getItem('uv_active_section') || '';
-      return fromHash || fromStorage || 'overview';
+      if (window.location.hash) {
+        window.history?.replaceState?.(null, '', window.location.pathname + window.location.search);
+      }
+      return fromStorage || 'overview';
     } catch {
       return 'overview';
     }
@@ -163,8 +165,8 @@ export default function App() {
     if (!isAuthenticated || !currentUser || !activeSection) return;
     try {
       window.sessionStorage?.setItem('uv_active_section', activeSection);
-      if (window.location.hash !== `#${activeSection}`) {
-        window.history?.replaceState?.(null, '', `#${activeSection}`);
+      if (window.location.hash) {
+        window.history?.replaceState?.(null, '', window.location.pathname + window.location.search);
       }
     } catch {
       // ignore storage/history errors
