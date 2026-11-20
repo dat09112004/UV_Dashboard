@@ -1615,4 +1615,5 @@ export const english = {
   "đã nhắc việc": "sent reminder",
   "— Hàng chờ —": "— Shared Queue —",
   "— Nhập thủ công —": "— Manual Entry —",
+  "Tối thiểu 8 ký tự": "Minimum 8 characters",
 };

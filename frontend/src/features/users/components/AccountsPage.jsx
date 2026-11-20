@@ -179,7 +179,7 @@ export default function AccountsPage({ accounts, departmentNavigation, actor, on
         <fieldset disabled={busy} className="item-form-grid">
           <label className="workflow-wide">{t('Họ và tên')} <span className="required-mark" aria-hidden="true">*</span><input name="name" autoComplete="name" required maxLength={100} /></label>
           <label className="workflow-wide">{t('Email')} <span className="required-mark" aria-hidden="true">*</span><input name="email" type="email" autoComplete="off" required maxLength={254} /></label>
-          <label>{t('Mật khẩu ban đầu')} <span className="required-mark" aria-hidden="true">*</span><input name="password" type="password" autoComplete="new-password" required minLength={12} maxLength={128} /></label>
+          <label>{t('Mật khẩu ban đầu')} <span className="required-mark" aria-hidden="true">*</span><input name="password" type="password" autoComplete="new-password" required minLength={8} placeholder={t("Tối thiểu 8 ký tự")} maxLength={128} /></label>
           <RoleSelect roles={roles} defaultValue="Sale" />
         </fieldset>
         <div className="workflow-footer">

@@ -19,7 +19,7 @@ function PasswordField({ name, label, autoComplete }) {
     <label htmlFor={id}>{t(label)}</label>
     <div className="profile-password-input">
       <input id={id} name={name} type={visible ? "text" : "password"} autoComplete={autoComplete}
-        required maxLength={128} minLength={autoComplete === "new-password" ? 12 : undefined} />
+        required maxLength={128} minLength={autoComplete === "new-password" ? 8 : undefined} />
       <button type="button" onClick={() => setVisible(!visible)} aria-label={visibilityLabel} title={visibilityLabel}>
         {visible ? <EyeOff size={18} /> : <Eye size={18} />}
       </button>
