@@ -128,7 +128,7 @@ function AccountDialog({ view, user, onClose, onChangeView, onPasswordChanged })
         <PasswordField name="newPassword" label={t("Mật khẩu mới")} autoComplete="new-password" />
         <PasswordField name="confirmPassword" label={t("Xác nhận mật khẩu mới")} autoComplete="new-password" />
       </fieldset>
-      <p id={noteId} className="profile-dialog-note">{t("Dùng từ 12 đến 128 ký tự. Đăng nhập lại sau khi lưu.")}</p>
+      <p id={noteId} className="profile-dialog-note">{t("Tối thiểu 12  ký tự. Đăng nhập lại sau khi lưu.")}</p>
       {error && <p className="profile-form-error" role="alert">{t(error)}</p>}
       <div className="profile-dialog-actions">
         <button type="button" className="profile-secondary" onClick={closeDialog} disabled={saving}>{t("Hủy")}</button>
