@@ -112,7 +112,7 @@ function AssignmentFields({ people, task, today, defaultRole = '' }) {
     </select></label> : <label>{t('Người phụ trách')} <span className="required-mark" aria-hidden="true">*</span><select name="assigneeId" defaultValue={defaultAssignee} required>
       <option value="">{t('Chọn người phụ trách')}</option>
       {people.filter(person => !task?.department || person.role === task.department).map(person =>
-        <option key={person.id} value={person.id}>{person.name} · {t(person.roleLabel)}</option>)}
+        <option key={person.id} value={person.id}>{person.employeeCode ? `[${person.employeeCode}] ` : ''}{person.name} · {t(person.roleLabel)}</option>)}
     </select></label>}
     <label>{t('Hạn hoàn thành')} <span className="required-mark" aria-hidden="true">*</span><input name="deadline" type="date" min={today} defaultValue={dateInputValue(task?.deadline) || today} required /></label>
   </>;

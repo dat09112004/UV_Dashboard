@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Lock, LockOpen, RotateCcw, Search, UserPlus } from 'lucide-react';
+import { KeyRound, Lock, LockOpen, RotateCcw, Search, UserPlus } from 'lucide-react';
 import { phrase, t } from '../../../locales/i18n.js';
 import { useDebouncedValue } from '../../../hooks/useDebounce.js';
 import { useProgressivePagination } from '../../../hooks/useProgressivePagination.js';
 import ProgressivePaginationBar from '../../../components/common/ProgressivePaginationBar.jsx';
 import FormWindowDialog from '../../../components/common/FormWindowDialog.jsx';
+import SearchableSelect from '../../../components/common/SearchableSelect.jsx';
 import {
   canEditAccount,
   canToggleAccountStatus,
@@ -27,16 +28,40 @@ function RoleSelect({ roles, defaultValue, onChange }) {
 // Chức năng: Bảng đánh dấu các phân hệ được phép truy cập của từng tài khoản hoặc áp dụng đồng loạt cho cả phòng ban
 function NavigationFields({ account, roles, departmentNavigation, onApplyDepartment, onCancel }) {
   const [role, setRole] = useState(account.role);
+  const [empCode, setEmpCode] = useState(account.employeeCode || '');
   const [selected, setSelected] = useState(() =>
     departmentNavigation?.[account.role] ?? defaultNavigationForRole(account.role));
   const detailsAvailable = OVERVIEW_SECTIONS.every(section => selected.includes(section));
   const selectedForDepartment = selected.filter(section => section !== 'overview' || detailsAvailable);
   return <>
-    <RoleSelect roles={roles} defaultValue={role} onChange={event => {
-      const nextRole = event.target.value;
-      setRole(nextRole);
-      setSelected(departmentNavigation?.[nextRole] ?? defaultNavigationForRole(nextRole));
-    }} />
+    <div className="item-form-grid">
+      <label>{t('Mã nhân viên (UV...)')} <span className="required-mark" aria-hidden="true">*</span>
+        <input
+          name="employeeCode"
+          value={empCode}
+          onChange={e => setEmpCode(e.target.value.toUpperCase().replace(/[^A-Z0-9_-]/g, ''))}
+          required
+          pattern="^UV[A-Za-z0-9_-]{1,30}$"
+          maxLength={32}
+          placeholder="UV001"
+        />
+      </label>
+      <RoleSelect roles={roles} defaultValue={role} onChange={event => {
+        const nextRole = event.target.value;
+        setRole(nextRole);
+        setSelected(departmentNavigation?.[nextRole] ?? defaultNavigationForRole(nextRole));
+      }} />
+      <label className="workflow-wide">{t('Đặt lại mật khẩu mới (để trống nếu giữ nguyên)')}
+        <input
+          name="password"
+          type="password"
+          autoComplete="new-password"
+          minLength={8}
+          maxLength={128}
+          placeholder={t('Tối thiểu 8 ký tự (bỏ trống nếu không đổi)')}
+        />
+      </label>
+    </div>
     {Object.hasOwn(DEPARTMENT_ROLES, role) && <>
       <fieldset className="navigation-checklist">
         <legend>{t('Trang được phép truy cập của phòng ban')}</legend>
@@ -51,7 +76,7 @@ function NavigationFields({ account, roles, departmentNavigation, onApplyDepartm
           {t(NAVIGATION_LABELS[section] || section)}
         </label>)}
       </fieldset>
-      
+
       <button type="button" className="row-detail-button" disabled={!selectedForDepartment.length}
         onClick={() => onApplyDepartment(role, selectedForDepartment)}>
         {t('Áp dụng cho toàn bộ phòng ban')}
@@ -59,15 +84,20 @@ function NavigationFields({ account, roles, departmentNavigation, onApplyDepartm
     </>}
     <div className="workflow-footer">
       <button type="button" onClick={onCancel}>{t('Hủy')}</button>
-      <button className="primary" type="submit">{t('Lưu vai trò')}</button>
+      <button className="primary" type="submit">{t('Lưu thay đổi')}</button>
     </div>
   </>;
 }
 
-// Chức năng: Trang Quản lý tài khoản (chỉ dành cho Admin): tạo tài khoản Sale/Kế toán và cấp quyền menu phòng ban qua chế độ cửa sổ (Modal Window) chuẩn responsive
+// Chức năng: Trang Quản lý tài khoản (chỉ dành cho Admin): tạo tài khoản bắt buộc Mã nhân viên UV..., đặt lại mật khẩu, lọc nhanh gõ chữ và cấp quyền phòng ban
 export default function AccountsPage({ accounts, departmentNavigation, actor, onAction, busy }) {
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [createEmpCode, setCreateEmpCode] = useState('UV');
   const [editingId, setEditingId] = useState(null);
+  const [resetTarget, setResetTarget] = useState(null);
+  const [resetPwd, setResetPwd] = useState('');
+  const [resetConfirmPwd, setResetConfirmPwd] = useState('');
+  const [resetError, setResetError] = useState('');
   const [confirmation, setConfirmation] = useState(null);
   const [confirmError, setConfirmError] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
@@ -83,6 +113,23 @@ export default function AccountsPage({ accounts, departmentNavigation, actor, on
     const fromAccounts = [...new Set((accounts || []).map(acc => acc.role).filter(r => r && r !== 'Admin'))];
     return fromAccounts.length > 0 ? fromAccounts : Object.keys(ROLE_PROFILES).filter(r => r !== 'Admin');
   }, [accounts]);
+
+  const roleFilterOptions = useMemo(
+    () => [
+      { value: 'all', label: t('Tất cả vai trò') },
+      ...availableRoles.map(r => ({ value: r, label: t(ROLE_PROFILES[r]?.label || r), keywords: r })),
+    ],
+    [availableRoles]
+  );
+
+  const statusFilterOptions = useMemo(
+    () => [
+      { value: 'all', label: t('Tất cả trạng thái') },
+      { value: 'active', label: t('Đang hoạt động') },
+      { value: 'inactive', label: t('Đã khóa') },
+    ],
+    []
+  );
 
   const dialogRef = useRef(null);
   const editHeading = useRef(null);
@@ -103,7 +150,7 @@ export default function AccountsPage({ accounts, departmentNavigation, actor, on
       if (debouncedRoleFilter !== 'all' && acc.role !== debouncedRoleFilter) return false;
       if (debouncedStatusFilter !== 'all' && acc.status !== debouncedStatusFilter) return false;
       if (q) {
-        const hay = [acc.name, acc.email, acc.roleLabel, acc.department, acc.title].filter(Boolean).join(' ').toLowerCase();
+        const hay = [acc.employeeCode, acc.name, acc.email, acc.roleLabel, acc.department, acc.title].filter(Boolean).join(' ').toLowerCase();
         if (!hay.includes(q)) return false;
       }
       return true;
@@ -126,12 +173,54 @@ export default function AccountsPage({ accounts, departmentNavigation, actor, on
     const form = event.currentTarget;
     const fields = new FormData(form);
     const payload = Object.fromEntries(fields);
+    if (payload.employeeCode) {
+      payload.employeeCode = String(payload.employeeCode).trim().toUpperCase();
+    }
+    if (action === 'update-account' && !String(payload.password || '').trim()) {
+      delete payload.password;
+    }
     if (!await onAction(action, payload)) return;
     if (action === 'create-account') {
       form.reset();
+      setCreateEmpCode('UV');
       setShowCreateModal(false);
     } else {
       closeEditor();
+    }
+  };
+
+  // Chức năng: Gửi lệnh đặt lại mật khẩu trực tiếp cho tài khoản từ giao diện Admin
+  const submitResetPassword = async event => {
+    event.preventDefault();
+    if (!resetTarget || busy) return;
+    if (resetPwd.length < 8) {
+      setResetError('Mật khẩu mới phải tối thiểu 8 ký tự.');
+      return;
+    }
+    if (resetPwd !== resetConfirmPwd) {
+      setResetError('Xác nhận mật khẩu mới không khớp.');
+      return;
+    }
+    setResetError('');
+    const ok = await onAction(
+      'update-account',
+      {
+        id: resetTarget.id,
+        name: resetTarget.name,
+        email: resetTarget.email,
+        role: resetTarget.role,
+        status: resetTarget.status,
+        employeeCode: resetTarget.employeeCode || '',
+        expectedTokenVersion: resetTarget.tokenVersion,
+        password: resetPwd,
+      },
+      setResetError
+    );
+    if (ok) {
+      setResetTarget(null);
+      setResetPwd('');
+      setResetConfirmPwd('');
+      setResetError('');
     }
   };
 
@@ -166,7 +255,7 @@ export default function AccountsPage({ accounts, departmentNavigation, actor, on
       </>}
     </dialog>
 
-    {/* Cửa sổ Tạo tài khoản mới */}
+    {/* Cửa sổ Tạo tài khoản mới (Bắt buộc nhập Mã nhân viên UV...) */}
     <FormWindowDialog
       open={showCreateModal}
       title="Tạo tài khoản mới"
@@ -177,10 +266,21 @@ export default function AccountsPage({ accounts, departmentNavigation, actor, on
     >
       <form className="workflow-form" onSubmit={event => submit(event, 'create-account')}>
         <fieldset disabled={busy} className="item-form-grid">
+          <label>{t('Mã nhân viên (UV...)')} <span className="required-mark" aria-hidden="true">*</span>
+            <input
+              name="employeeCode"
+              value={createEmpCode}
+              onChange={e => setCreateEmpCode(e.target.value.toUpperCase().replace(/[^A-Z0-9_-]/g, ''))}
+              required
+              pattern="^UV[A-Za-z0-9_-]{1,30}$"
+              maxLength={32}
+              placeholder="UV001"
+            />
+          </label>
+          <RoleSelect roles={roles} defaultValue="Sale" />
           <label className="workflow-wide">{t('Họ và tên')} <span className="required-mark" aria-hidden="true">*</span><input name="name" autoComplete="name" required maxLength={100} /></label>
           <label className="workflow-wide">{t('Email')} <span className="required-mark" aria-hidden="true">*</span><input name="email" type="email" autoComplete="off" required maxLength={254} /></label>
-          <label>{t('Mật khẩu ban đầu')} <span className="required-mark" aria-hidden="true">*</span><input name="password" type="password" autoComplete="new-password" required minLength={8} placeholder={t("Tối thiểu 8 ký tự")} maxLength={128} /></label>
-          <RoleSelect roles={roles} defaultValue="Sale" />
+          <label className="workflow-wide">{t('Mật khẩu ban đầu')} <span className="required-mark" aria-hidden="true">*</span><input name="password" type="password" autoComplete="new-password" required minLength={8} placeholder={t("Tối thiểu 8 ký tự")} maxLength={128} /></label>
         </fieldset>
         <div className="workflow-footer">
           <button type="button" disabled={busy} onClick={() => setShowCreateModal(false)}>{t('Hủy')}</button>
@@ -189,11 +289,58 @@ export default function AccountsPage({ accounts, departmentNavigation, actor, on
       </form>
     </FormWindowDialog>
 
-    {/* Cửa sổ Cấp quyền & Phân hệ truy cập */}
+    {/* Cửa sổ Đặt lại mật khẩu cho tài khoản (Admin) */}
+    <FormWindowDialog
+      open={Boolean(resetTarget)}
+      title={resetTarget ? `${t('Đặt lại mật khẩu')} · ${resetTarget.name}` : t('Đặt lại mật khẩu')}
+      subtitle={resetTarget ? `${resetTarget.employeeCode ? `${resetTarget.employeeCode} · ` : ''}${resetTarget.email}` : ''}
+      size="sm"
+      busy={busy}
+      onClose={() => { setResetTarget(null); setResetPwd(''); setResetConfirmPwd(''); setResetError(''); }}
+    >
+      {resetTarget && (
+        <form className="workflow-form" onSubmit={submitResetPassword}>
+          <fieldset disabled={busy} className="item-form-grid">
+            <label className="workflow-wide">{t('Mật khẩu mới')} <span className="required-mark" aria-hidden="true">*</span>
+              <input
+                type="password"
+                autoComplete="new-password"
+                required
+                minLength={8}
+                maxLength={128}
+                value={resetPwd}
+                onChange={e => { setResetPwd(e.target.value); setResetError(''); }}
+                placeholder={t('Tối thiểu 8 ký tự')}
+              />
+            </label>
+            <label className="workflow-wide">{t('Xác nhận mật khẩu mới')} <span className="required-mark" aria-hidden="true">*</span>
+              <input
+                type="password"
+                autoComplete="new-password"
+                required
+                minLength={8}
+                maxLength={128}
+                value={resetConfirmPwd}
+                onChange={e => { setResetConfirmPwd(e.target.value); setResetError(''); }}
+                placeholder={t('Nhập lại mật khẩu mới')}
+              />
+            </label>
+          </fieldset>
+          {resetError && <p className="account-confirm-error" role="alert" style={{ marginTop: 8 }}>{t(resetError)}</p>}
+          <p className="text-xs text-slate-500 mt-2 mb-0">{t('Sau khi đặt lại mật khẩu, các phiên đăng nhập cũ của tài khoản này sẽ tự động đăng xuất.')}</p>
+          <div className="workflow-footer">
+            <button type="button" disabled={busy} onClick={() => { setResetTarget(null); setResetPwd(''); setResetConfirmPwd(''); setResetError(''); }}>{t('Hủy')}</button>
+            <button className="primary" type="submit" disabled={busy}>{t('Xác nhận đặt lại mật khẩu')}</button>
+          </div>
+        </form>
+      )}
+    </FormWindowDialog>
+
+    {/* Cửa sổ Cấp quyền, Mã nhân viên & Đặt lại mật khẩu */}
     <FormWindowDialog
       open={Boolean(editing && canEditAccount(actor, editing))}
       title={editing ? `${t('Cấp quyền')} · ${editing.name}` : t('Cấp quyền')}
-      subtitle={editing?.email || ''}
+      subtitle={editing ? `${editing.employeeCode ? `${editing.employeeCode} · ` : ''}${editing.email}` : ''}
       size="md"
       busy={busy}
       onClose={closeEditor}
@@ -202,6 +349,9 @@ export default function AccountsPage({ accounts, departmentNavigation, actor, on
         <form id="account-permissions-form" className="workflow-form" key={editing.id} onSubmit={event => submit(event, 'update-account')}>
           <fieldset disabled={busy}>
             <input type="hidden" name="id" value={editing.id} />
+            <input type="hidden" name="name" value={editing.name} />
+            <input type="hidden" name="email" value={editing.email} />
+            <input type="hidden" name="status" value={editing.status} />
             {editing.tokenVersion !== undefined && <input type="hidden" name="expectedTokenVersion" value={editing.tokenVersion} />}
             <h3 ref={editHeading} tabIndex={-1} className="sr-only">{t('Cấp quyền')} · {editing.name}</h3>
             <NavigationFields roles={roles} account={editing} departmentNavigation={departmentNavigation}
@@ -222,7 +372,7 @@ export default function AccountsPage({ accounts, departmentNavigation, actor, on
           <button
             type="button"
             disabled={busy}
-            onClick={() => setShowCreateModal(true)}
+            onClick={() => { setCreateEmpCode('UV'); setShowCreateModal(true); }}
             className="row-primary-button flex items-center gap-1.5"
           >
             <UserPlus size={15} />
@@ -234,28 +384,28 @@ export default function AccountsPage({ accounts, departmentNavigation, actor, on
               type="search"
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
+              placeholder={t('Tìm tên, email, mã NV (UV...)')}
               aria-label={t('Tìm tài khoản')}
             />
           </label>
-          <select
+          <SearchableSelect
             value={roleFilter}
-            onChange={e => setRoleFilter(e.target.value)}
-            aria-label={t('Lọc vai trò')}
-          >
-            <option value="all">{t('Tất cả vai trò')}</option>
-            {availableRoles.map(r => (
-              <option key={r} value={r}>{t(ROLE_PROFILES[r]?.label || r)}</option>
-            ))}
-          </select>
-          <select
+            options={roleFilterOptions}
+            onChange={setRoleFilter}
+            ariaLabel={t('Lọc vai trò')}
+            placeholder={t('Lọc vai trò…')}
+            allowClear
+            clearValue="all"
+          />
+          <SearchableSelect
             value={statusFilter}
-            onChange={e => setStatusFilter(e.target.value)}
-            aria-label={t('Lọc trạng thái')}
-          >
-            <option value="all">{t('Tất cả trạng thái')}</option>
-            <option value="active">{t('Đang hoạt động')}</option>
-            <option value="inactive">{t('Đã khóa')}</option>
-          </select>
+            options={statusFilterOptions}
+            onChange={setStatusFilter}
+            ariaLabel={t('Lọc trạng thái')}
+            placeholder={t('Lọc trạng thái…')}
+            allowClear
+            clearValue="all"
+          />
           {(searchQuery || roleFilter !== 'all' || statusFilter !== 'all') && (
             <button
               type="button"
@@ -270,7 +420,7 @@ export default function AccountsPage({ accounts, departmentNavigation, actor, on
       </div>
       <div className="table-scroll">
         <table className="management-table accounts-table">
-          <thead><tr><th>{t('Họ và tên')}</th><th>{t('Vai trò')}</th><th>{t('Trạng thái')}</th><th>{t('Thao tác')}</th></tr></thead>
+          <thead><tr><th>{t('Mã NV')}</th><th>{t('Họ và tên')}</th><th>{t('Vai trò')}</th><th>{t('Trạng thái')}</th><th>{t('Thao tác')}</th></tr></thead>
           <tbody>{pagedAccounts.map(account => {
             const locked = account.status !== 'active';
             const Icon = locked ? Lock : LockOpen;
@@ -278,6 +428,7 @@ export default function AccountsPage({ accounts, departmentNavigation, actor, on
             const canEdit = canEditAccount(actor, account);
             const canToggle = canToggleAccountStatus(actor, account);
             return <tr key={account.id} className={locked ? 'account-row-locked' : undefined}>
+              <td><span className="font-mono text-xs font-bold text-slate-800 bg-slate-100 border border-slate-200 rounded px-2 py-0.5">{account.employeeCode || '—'}</span></td>
               <td><strong>{account.name}</strong><small>{account.email}</small></td>
               <td>{t(account.roleLabel)}</td>
               <td><span className={locked ? 'account-locked-badge' : undefined}>{t(locked ? 'Đã khóa' : 'Đang hoạt động')}</span></td>
@@ -288,6 +439,11 @@ export default function AccountsPage({ accounts, departmentNavigation, actor, on
                     editTrigger.current = event.currentTarget;
                     setEditingId(account.id);
                   }}>{t('Cấp quyền')}</button>}
+                {canEdit && <button className="row-detail-button" type="button" disabled={busy}
+                  title={t('Đặt lại mật khẩu')}
+                  onClick={() => { setResetTarget(account); setResetPwd(''); setResetConfirmPwd(''); setResetError(''); }}>
+                  <KeyRound size={14} aria-hidden="true" /><span>{t('Đặt lại MK')}</span>
+                </button>}
                 {canToggle && <button className="account-lock-button" type="button" disabled={busy} aria-haspopup="dialog"
                   aria-label={`${t(actionLabel)} · ${account.name}`} title={t(actionLabel)}
                   onClick={() => requestConfirmation({

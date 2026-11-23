@@ -33,6 +33,11 @@ import {
   assignDebtApi,
   requestTransferDebtApi,
   respondTransferDebtApi,
+  fetchCustomerDeliveriesApi,
+  requestOrderTransferApi,
+  respondOrderTransferApi,
+  requestPasswordResetOtpApi,
+  resetPasswordWithOtpApi,
 } from './services/api.js';
 import AppHeader, { NAV_ITEMS } from './components/layout/AppHeader.jsx';
 import DashboardOverview, { OverviewKpis, AttentionSummary, EmployeeAlertReminder } from './components/dashboard/DashboardOverview.jsx';
@@ -47,6 +52,7 @@ import DebtStatusOverview from './components/finance/DebtStatusOverview.jsx';
 import DebtDetailPanel from './components/finance/DebtDetailPanel.jsx';
 import TransferDebtForm from './components/finance/TransferDebtForm.jsx';
 import IconActionButton from './components/common/IconActionButton.jsx';
+import SearchableSelect from './components/common/SearchableSelect.jsx';
 import { getRoleLayout, presentAlert } from './utils/dashboardPresentation.js';
 import { alertDestination, payableAction, receivableAction } from './utils/workspaceUi.js';
 import { InvoiceForm, ReceivableCrudForm, PayableCrudForm, ReceiptWorkspace, PayableForm, ReceivableWorkflowForm, SplitPayableForm, FinanceHistory } from './components/finance/FinanceForms.jsx';
@@ -108,20 +114,32 @@ export default function App() {
   const [isSigningIn, setIsSigningIn] = useState(false);
   const loginLockDialog = useRef(null);
   const termsPolicyDialog = useRef(null);
-  const [policy, setPolicy] = useState(null);
+  const FALLBACK_TERMS_POLICY = {
+    version: '2026.1',
+    title: 'Chính sách bảo mật & Điều khoản vận hành Hệ thống ERP Uyên Vũ International',
+    requiredOnLogin: true,
+    sections: [
+      { heading: 'Bảo mật dữ liệu kinh doanh và tài chính',
+        body: 'Chỉ sử dụng thông tin PO, doanh thu và công nợ trong phạm vi công việc được giao.' },
+      { heading: 'Quyền truy cập và bảo vệ tài khoản',
+        body: 'Sử dụng tài khoản cá nhân và giữ bí mật mật khẩu, mã phiên đăng nhập.' },
+      { heading: 'Nhật ký nghiệp vụ',
+        body: 'Hệ thống lưu lịch sử cập nhật tiến độ, giao dịch tài chính và bàn giao công việc.' },
+    ],
+  };
+  const [policy, setPolicy] = useState(() => FALLBACK_TERMS_POLICY);
   const [policyError, setPolicyError] = useState('');
   const [policyAttempt, setPolicyAttempt] = useState(0);
-  useEffect(() => {
-    const controller = new AbortController();
-    setPolicyError('');
-    fetchTermsPolicyApi(controller.signal).then(data => {
-      if (!controller.signal.aborted) setPolicy(data);
-    }).catch(error => {
-      if (!controller.signal.aborted) setPolicyError(error.message);
-    });
-    return () => controller.abort();
-  }, [policyAttempt]);
-  const [forgotPasswordSent, setForgotPasswordSent] = useState(false);
+  // App nội bộ công ty: không bắt buộc tải hoặc tích đồng ý điều khoản khi đăng nhập
+  const [forgotMode, setForgotMode] = useState(false);
+  const [forgotStep, setForgotStep] = useState('email'); // 'email' | 'verify'
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotOtp, setForgotOtp] = useState('');
+  const [forgotNewPassword, setForgotNewPassword] = useState('');
+  const [forgotConfirmPassword, setForgotConfirmPassword] = useState('');
+  const [forgotBusy, setForgotBusy] = useState(false);
+  const [forgotError, setForgotError] = useState('');
+  const [forgotStatus, setForgotStatus] = useState('');
 
   const [currentAccountId, setCurrentAccountId] = useState(() => initialStoredSession?.accountId || initialStoredSession?.account?.id || null);
   const [isRestoringSession, setIsRestoringSession] = useState(() => Boolean(initialStoredSession?.hasSession || initialStoredSession?.token));
@@ -244,7 +262,8 @@ export default function App() {
     }
   }, [currentUser, currentAccountId, isRestoringSession, sessionRestoreError]);
 
-  const [orderView, setOrderView] = useState('fulfillment');
+  const [orderView, setOrderView] = useState('inbound');
+  const [customerDeliveries, setCustomerDeliveries] = useState([]);
   const [orderFilter, setOrderFilter] = useState('all');
   const [reportDate, setReportDate] = useState(() => businessToday());
   const [debtFilter, setDebtFilter] = useState('all');
@@ -278,6 +297,24 @@ export default function App() {
   const [dataRevision, setDataRevision] = useState(0);
   const [dataError, setDataError] = useState('');
   const [ordersWarning, setOrdersWarning] = useState('');
+
+  useEffect(() => {
+    if (!isAuthenticated || !showOrders) {
+      setCustomerDeliveries([]);
+      return;
+    }
+    const controller = new AbortController();
+    fetchCustomerDeliveriesApi(controller.signal)
+      .then(res => {
+        if (!controller.signal.aborted) {
+          setCustomerDeliveries(Array.isArray(res?.items) ? res.items : []);
+        }
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setCustomerDeliveries([]);
+      });
+    return () => controller.abort();
+  }, [isAuthenticated, showOrders, dataRevision, currentAccountId]);
   const [dataLoading, setDataLoading] = useState(false);
   const dataPanel = ['overview', 'orders', 'revenue', 'receivables', 'payables', 'data-entry', 'reminders'].includes(activeSection);
   const loadOrders = canReadOrdersData && (dataPanel || activeSection === 'assignments');
@@ -550,18 +587,13 @@ export default function App() {
   // Handle Login Submit (Enforces mandatory Terms & Privacy Policy Checkbox)
   const handleLoginSubmit = async (e) => {
     e.preventDefault();
-    if (isSigningIn || !policy?.version) return;
+    if (isSigningIn) return;
     setLoginError('');
     setLoginNotice('');
-    // F08 Fix: Tuân thủ chính sách requiredOnLogin đồng bộ với cấu hình Backend
-    if (policy?.requiredOnLogin !== false && !acceptedTerms) {
-      setLoginError(TERMS_REQUIRED_MESSAGE);
-      return;
-    }
     setIsSigningIn(true);
     let result;
     try {
-      result = await signIn(loginEmail, loginPassword, acceptedTerms, policy?.version, { requiredOnLogin: policy?.requiredOnLogin });
+      result = await signIn(loginEmail, loginPassword, true, policy?.version || '2026.1', { requiredOnLogin: false });
     } catch (err) {
       if (err?.code === 'TERMS_VERSION_MISMATCH') {
         setPolicy(null);
@@ -581,7 +613,7 @@ export default function App() {
       setLoginError(LOCKED_ACCOUNT_MESSAGE);
       setLoginPassword('');
       setShowPassword(false);
-      setForgotPasswordSent(false);
+      setForgotMode(false);
       loginLockDialog.current?.showModal();
       return;
     }
@@ -601,7 +633,7 @@ export default function App() {
     setLoginError('');
     setIsAuthenticated(true);
     setLoginPassword('');
-    setForgotPasswordSent(false);
+    setForgotMode(false);
     showToast(`Đăng nhập thành công với vai trò: ${matched.title}`, 'info');
   };
 
@@ -692,7 +724,13 @@ export default function App() {
     setAlertTaskDraft(null);
     setActiveSection(section);
     if (section === 'orders') {
-      setOrderView(filter === 'production' ? 'production' : 'fulfillment');
+      const outboundFilters = ['partial_delivery', 'delivered', 'unknown_delivery', 'late'];
+      const nextView = filter === 'production'
+        ? 'production'
+        : (outboundFilters.includes(filter) || String(filter || '').startsWith('delivery:') || String(filter || '').startsWith('risk:'))
+          ? 'outbound'
+          : 'inbound';
+      setOrderView(nextView);
       setOrderFilter(['production', 'red'].includes(filter) ? 'all' : filter);
     }
     setDebtFilter(['receivables', 'payables'].includes(section) ? filter : 'all');
@@ -752,19 +790,53 @@ export default function App() {
     (alertReminderType === 'finance' && ['receivables', 'payables'].includes(activeSection)));
   useEffect(() => () => orderDetailRequest.current?.abort(), [activeSection, isAuthenticated, reportDate]);
   // Chức năng: Mở (openItem - Item) phục vụ xử lý dữ liệu trong App.jsx
-  const openItem = async item => {
+  const openItem = async (item, preferredTab) => {
     orderDetailRequest.current?.abort();
     const controller = new AbortController();
     orderDetailRequest.current = controller;
+    const initialFormTab = preferredTab || (orderView === 'outbound' ? 'outbound' : 'inbound');
     try {
       const detail = await fetchOrderDetailApi(item.rowId, controller.signal);
       if (!controller.signal.aborted) {
         orderDetailRequest.current = null;
-        openWorkspace({ type: 'ITEM_DETAIL', data: classifyProgress(detail, reportDate) });
+        openWorkspace({ type: 'ITEM_DETAIL', data: classifyProgress(detail, reportDate), initialFormTab });
       }
     } catch (error) {
       if (!controller.signal.aborted) showToast(error.message, 'error');
     }
+  };
+
+  // Chức năng: Gửi yêu cầu chuyển giao đơn hàng PO sang nhân viên Sale khác (chờ người nhận đồng ý)
+  const handleRequestOrderTransfer = async (rowId, payload) => {
+    const res = await requestOrderTransferApi(rowId, payload);
+    if (res?.item) {
+      const classified = classifyProgress(res.item, reportDate);
+      setVendorItems(prev => prev.map(row => (Number(row.rowId) === Number(rowId) ? classified : row)));
+      setWorkspacePanel(prev => (prev?.type === 'ITEM_DETAIL' && Number(prev.data?.rowId) === Number(rowId)
+        ? { ...prev, data: classified } : prev));
+    }
+    setDataRevision(v => v + 1);
+    showToast(`Đã gửi yêu cầu chuyển giao đơn hàng sang ${res?.pendingTransfer?.toUserName || 'nhân viên Sale'}. Đang chờ người nhận đồng ý.`);
+    return res;
+  };
+
+  // Chức năng: Phản hồi yêu cầu chuyển giao đơn hàng PO (Đồng ý / Từ chối / Hủy)
+  const handleRespondOrderTransfer = async (rowId, payload) => {
+    const res = await respondOrderTransferApi(rowId, payload);
+    if (res?.item) {
+      const classified = classifyProgress(res.item, reportDate);
+      setVendorItems(prev => prev.map(row => (Number(row.rowId) === Number(rowId) ? classified : row)));
+      setWorkspacePanel(prev => (prev?.type === 'ITEM_DETAIL' && Number(prev.data?.rowId) === Number(rowId)
+        ? { ...prev, data: classified } : prev));
+    }
+    setDataRevision(v => v + 1);
+    const msg = payload?.decision === 'accept'
+      ? 'Đã đồng ý nhận chuyển giao đơn hàng.'
+      : payload?.decision === 'reject'
+        ? 'Đã từ chối yêu cầu chuyển giao đơn hàng.'
+        : 'Đã hủy yêu cầu chuyển giao đơn hàng.';
+    showToast(msg);
+    return res;
   };
   // Chức năng: Xử lý sự kiện (handleExport - Export) phục vụ xử lý dữ liệu trong App.jsx
   const handleExport = async () => {
@@ -816,7 +888,7 @@ export default function App() {
               (snapshotCategory === 'Tất cả ngành hàng' || item.category === snapshotCategory) &&
               matchesOrigin(item, snapshotOrigin, trackedAll) &&
               (!snapshotRedOnly || item.priorityRank === 0) &&
-              (!q || [item.poId, item.vendorNo, item.vendorName, item.vendorItemNo, item.category].some(val => matchesSearch(val, q)))
+              (!q || [item.poId, item.vendorNo, item.vendorName, item.vendorItemNo, item.category, item.assignedSaleName, item.customerName, accounts.find(a => a.id === (item.assignedSaleId || item.createdById))?.employeeCode].some(val => matchesSearch(val, q)))
             );
           }).sort(comparePriority);
         } catch (err) {
@@ -830,7 +902,7 @@ export default function App() {
         }
       }
       const exportVendorItems =
-        snapshotSection === 'orders' && snapshotOrderView === 'fulfillment' && snapshotOrderFilter !== 'all'
+        snapshotSection === 'orders' && ['inbound', 'outbound', 'fulfillment'].includes(snapshotOrderView) && snapshotOrderFilter !== 'all'
           ? baseExportItems.filter(item => matchesFulfillment(item, snapshotOrderFilter, snapshotReportDate))
           : baseExportItems;
 
@@ -1164,7 +1236,7 @@ export default function App() {
     setLoginError('');
     setSessionRestoreError('');
     setLoginNotice(baseNotice);
-    setForgotPasswordSent(false);
+    setForgotMode(false);
     setWorkspacePanel(null);
     setActiveSection('overview');
     try {
@@ -1211,7 +1283,159 @@ export default function App() {
               {t(sessionRestoreError)} <button type="button" onClick={() => setSessionRestoreAttempt(attempt => attempt + 1)}>{t('Thử lại')}</button>
             </div>}
             {loginNotice && <div className="login-message" role="status">{t(loginNotice)}</div>}
-            {forgotPasswordSent && <div className="login-message" role="status">{t("Vui lòng liên hệ quản trị viên để cấp lại mật khẩu.")}</div>}
+            {forgotMode ? (
+              <div className="login-form">
+                {forgotError && <div className="login-message login-error" role="alert">{t(forgotError)}</div>}
+                {forgotStatus && <div className="login-message" role="status">{t(forgotStatus)}</div>}
+                {forgotStep === 'email' ? (
+                  <form
+                    onSubmit={async event => {
+                      event.preventDefault();
+                      const cleanEmail = String(forgotEmail || '').trim();
+                      if (!cleanEmail) { setForgotError('Vui lòng nhập email tài khoản.'); return; }
+                      setForgotError('');
+                      setForgotStatus('');
+                      setForgotBusy(true);
+                      try {
+                        const res = await requestPasswordResetOtpApi(cleanEmail);
+                        setForgotStatus(res?.message || 'Mã OTP 6 chữ số đã được gửi từ noreply@uyenvu-international.com (hiệu lực 3 phút).');
+                        setForgotStep('verify');
+                      } catch (err) {
+                        setForgotError(err?.message || 'Không thể gửi mã OTP. Vui lòng thử lại.');
+                      } finally {
+                        setForgotBusy(false);
+                      }
+                    }}
+                    className="login-form"
+                  >
+                    <div>
+                      <label htmlFor="forgot-email">{t("Email nhận mã OTP")}</label>
+                      <input
+                        id="forgot-email"
+                        type="email"
+                        required
+                        disabled={forgotBusy}
+                        value={forgotEmail}
+                        onChange={e => { setForgotEmail(e.target.value); setForgotError(''); }}
+                        placeholder="ten.nv@uyenvu-international.com"
+                      />
+                    </div>
+                    <p className="text-xs text-slate-600 m-0">
+                      {t("Hệ thống sẽ gửi mã OTP 6 chữ số từ địa chỉ noreply@uyenvu-international.com (hiệu lực 3 phút).")}
+                    </p>
+                    <button type="submit" className="login-submit" disabled={forgotBusy}>
+                      {t(forgotBusy ? 'Đang gửi mã OTP…' : 'Gửi mã OTP qua Email')}
+                    </button>
+                    <div className="login-options">
+                      <button type="button" onClick={() => { setForgotMode(false); setForgotStep('email'); setForgotError(''); setForgotStatus(''); }}>
+                        {t("Quay lại đăng nhập")}
+                      </button>
+                    </div>
+                  </form>
+                ) : (
+                  <form
+                    onSubmit={async event => {
+                      event.preventDefault();
+                      const cleanEmail = String(forgotEmail || '').trim();
+                      const cleanOtp = String(forgotOtp || '').trim();
+                      if (!/^\d{6}$/.test(cleanOtp)) { setForgotError('Mã OTP phải gồm đúng 6 chữ số.'); return; }
+                      if (forgotNewPassword.length < 8) { setForgotError('Mật khẩu mới phải tối thiểu 8 ký tự.'); return; }
+                      if (forgotNewPassword !== forgotConfirmPassword) { setForgotError('Xác nhận mật khẩu mới không khớp.'); return; }
+                      setForgotError('');
+                      setForgotBusy(true);
+                      try {
+                        const res = await resetPasswordWithOtpApi({ email: cleanEmail, otp: cleanOtp, newPassword: forgotNewPassword });
+                        setLoginEmail(cleanEmail);
+                        setLoginPassword('');
+                        setLoginNotice(res?.message || 'Đặt lại mật khẩu thành công. Vui lòng đăng nhập bằng mật khẩu mới.');
+                        setForgotMode(false);
+                        setForgotStep('email');
+                        setForgotOtp('');
+                        setForgotNewPassword('');
+                        setForgotConfirmPassword('');
+                        setForgotStatus('');
+                      } catch (err) {
+                        setForgotError(err?.message || 'Không thể đặt lại mật khẩu. Vui lòng kiểm tra lại mã OTP.');
+                      } finally {
+                        setForgotBusy(false);
+                      }
+                    }}
+                    className="login-form"
+                  >
+                    <div>
+                      <label htmlFor="forgot-otp">{t("Mã OTP (6 chữ số)")}</label>
+                      <input
+                        id="forgot-otp"
+                        type="text"
+                        inputMode="numeric"
+                        maxLength={6}
+                        required
+                        disabled={forgotBusy}
+                        value={forgotOtp}
+                        onChange={e => { setForgotOtp(e.target.value.replace(/\D/g, '').slice(0, 6)); setForgotError(''); }}
+                        placeholder="000000"
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="forgot-new-password">{t("Mật khẩu mới")}</label>
+                      <input
+                        id="forgot-new-password"
+                        type="password"
+                        required
+                        minLength={8}
+                        maxLength={128}
+                        autoComplete="new-password"
+                        disabled={forgotBusy}
+                        value={forgotNewPassword}
+                        onChange={e => { setForgotNewPassword(e.target.value); setForgotError(''); }}
+                        placeholder={t("Tối thiểu 8 ký tự")}
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="forgot-confirm-password">{t("Xác nhận mật khẩu mới")}</label>
+                      <input
+                        id="forgot-confirm-password"
+                        type="password"
+                        required
+                        minLength={8}
+                        maxLength={128}
+                        autoComplete="new-password"
+                        disabled={forgotBusy}
+                        value={forgotConfirmPassword}
+                        onChange={e => { setForgotConfirmPassword(e.target.value); setForgotError(''); }}
+                        placeholder={t("Nhập lại mật khẩu mới")}
+                      />
+                    </div>
+                    <button type="submit" className="login-submit" disabled={forgotBusy}>
+                      {t(forgotBusy ? 'Đang cập nhật…' : 'Xác nhận đặt lại mật khẩu')}
+                    </button>
+                    <div className="login-options">
+                      <button
+                        type="button"
+                        disabled={forgotBusy}
+                        onClick={async () => {
+                          setForgotError('');
+                          setForgotBusy(true);
+                          try {
+                            const res = await requestPasswordResetOtpApi(String(forgotEmail || '').trim());
+                            setForgotStatus(res?.message || 'Đã gửi lại mã OTP mới qua email noreply@uyenvu-international.com.');
+                          } catch (err) {
+                            setForgotError(err?.message || 'Không thể gửi lại mã OTP.');
+                          } finally {
+                            setForgotBusy(false);
+                          }
+                        }}
+                      >
+                        {t("Gửi lại mã OTP")}
+                      </button>
+                      <button type="button" onClick={() => { setForgotMode(false); setForgotStep('email'); setForgotError(''); setForgotStatus(''); }}>
+                        {t("Quay lại đăng nhập")}
+                      </button>
+                    </div>
+                  </form>
+                )}
+              </div>
+            ) : (
             <form onSubmit={handleLoginSubmit} className="login-form">
               <div>
                 <label htmlFor="login-email">Email</label>
@@ -1233,43 +1457,11 @@ export default function App() {
               <div className="login-options">
                 <label className="remember-email"><input type="checkbox" checked={rememberMe}
                   onChange={e => setRememberMe(e.target.checked)} />{t("Ghi nhớ email")}</label>
-                <button type="button" onClick={() => setForgotPasswordSent(true)}>{t("Quên mật khẩu?")}</button>
+                <button type="button" onClick={() => { setForgotEmail(loginEmail || ''); setForgotMode(true); setForgotStep('email'); setForgotError(''); setForgotStatus(''); setLoginError(''); setLoginNotice(''); }}>{t("Quên mật khẩu?")}</button>
               </div>
-              <div className="login-terms-box">
-                <label htmlFor="login-accept-terms" className="login-terms-label">
-                  <input
-                    id="login-accept-terms"
-                    name="acceptedTerms"
-                    type="checkbox"
-                    checked={acceptedTerms}
-                    disabled={!policy}
-                    onChange={e => {
-                      setAcceptedTerms(e.target.checked);
-                      if (e.target.checked && loginError === TERMS_REQUIRED_MESSAGE) {
-                        setLoginError('');
-                      }
-                    }}
-                    className="login-terms-checkbox"
-                  />
-                  <span className="login-terms-text">
-                    {t("Tôi đã đọc và đồng ý với Chính sách bảo mật và Điều khoản sử dụng hệ thống")}
-                    <span className="required-mark" aria-hidden="true"> *</span>
-                  </span>
-                </label>
-                <div className="login-terms-actions">
-                  <button
-                    type="button"
-                    disabled={!policy}
-                    onClick={() => termsPolicyDialog.current?.showModal()}
-                    className="login-terms-link"
-                  >
-                    <ShieldCheck size={14} aria-hidden="true" />
-                    <span>{t("Xem chi tiết Chính sách bảo mật & Điều khoản sử dụng")}</span>
-                  </button>
-                </div>
-              </div>
-              <button type="submit" className="login-submit" disabled={isSigningIn || !policy}>{t(isSigningIn ? 'Đang đăng nhập…' : 'Đăng nhập')} <ArrowRight size={18} /></button>
+              <button type="submit" className="login-submit" disabled={isSigningIn}>{t(isSigningIn ? 'Đang đăng nhập…' : 'Đăng nhập')} <ArrowRight size={18} /></button>
             </form>
+            )}
           </section>
         </main>
         <dialog className="account-confirm-dialog login-lock-dialog" ref={loginLockDialog}
@@ -1412,12 +1604,36 @@ export default function App() {
           />
         )}
         <section className="dashboard-filters" aria-label={t("Bộ lọc dữ liệu")}>
-          <label htmlFor="category-filter">{t("Ngành hàng")}<select id="category-filter" value={selectedCategory} onChange={e => setSelectedCategory(e.target.value)}>
-            <option value="Tất cả ngành hàng">{t("Tất cả ngành hàng")}</option>{orderCategories.map(category => <option key={category}>{category}</option>)}
-          </select></label>
-          <label htmlFor="origin-filter">{t("Xuất xứ")}<select id="origin-filter" value={selectedOrigin} onChange={e => setSelectedOrigin(e.target.value)}>
-            <option value="Tất cả xuất xứ">{t("Tất cả xuất xứ")}</option>{[...new Set(classifiedItems.map(row => row.countryOfOrigin).filter(Boolean))].map(origin => <option key={origin}>{origin}</option>)}
-          </select></label>
+          <label htmlFor="category-filter">{t("Ngành hàng")}
+            <SearchableSelect
+              id="category-filter"
+              value={selectedCategory}
+              options={[
+                { value: 'Tất cả ngành hàng', label: t('Tất cả ngành hàng') },
+                ...orderCategories.map(category => ({ value: category, label: category })),
+              ]}
+              onChange={setSelectedCategory}
+              ariaLabel={t("Ngành hàng")}
+              placeholder={t("Gõ tìm ngành hàng…")}
+              allowClear
+              clearValue="Tất cả ngành hàng"
+            />
+          </label>
+          <label htmlFor="origin-filter">{t("Xuất xứ")}
+            <SearchableSelect
+              id="origin-filter"
+              value={selectedOrigin}
+              options={[
+                { value: 'Tất cả xuất xứ', label: t('Tất cả xuất xứ') },
+                ...[...new Set(classifiedItems.map(row => row.countryOfOrigin).filter(Boolean))].map(origin => ({ value: origin, label: origin })),
+              ]}
+              onChange={setSelectedOrigin}
+              ariaLabel={t("Xuất xứ")}
+              placeholder={t("Gõ tìm xuất xứ…")}
+              allowClear
+              clearValue="Tất cả xuất xứ"
+            />
+          </label>
           <label htmlFor="workspace-search" className="filter-search">{t("Tìm kiếm")}<span><Search size={16} /><input id="workspace-search" type="search" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} /></span></label>
           <button className={onlyMyRoleRedAlerts ? 'red-filter active' : 'red-filter'} aria-pressed={onlyMyRoleRedAlerts} onClick={() => setOnlyMyRoleRedAlerts(!onlyMyRoleRedAlerts)}><Flame size={16} />{t("Báo động đỏ")}</button>
           <button className="reset-filters" title={t("Xóa bộ lọc")} aria-label={t("Xóa bộ lọc")} onClick={resetFilters}><RotateCcw size={17} /><span>{t("Xóa lọc")}</span></button>
@@ -1426,14 +1642,86 @@ export default function App() {
         {activeFilters.length > 0 && <div className="active-filters" aria-label={t("Bộ lọc đang áp dụng")}><span>{t("Đang lọc")}</span>{activeFilters.map(filter => <button key={filter.label} onClick={filter.clear} aria-label={phrase('Bỏ lọc §', t(filter.label))}>{t(filter.label)}<X size={13} /></button>)}</div>}
         {activeSection === 'overview' && <OverviewKpis role={currentRole} items={sortedVendorItems} revenue={sortedRevenueRecords} ar={arSummary} ap={apSummary} onNavigate={onNavigate} canNavigate={section => canOpenSection(currentUser, section)} />}
         <div className="page-content" key={activeSection}>
-        {['receivables', 'payables'].includes(activeSection) && <div className="debt-detail-filter"><span>{phrase('§ chứng từ', activeSection === 'receivables' ? arPagination.totalItems : apPagination.totalItems)}</span><label htmlFor="debt-status-filter">{t("Trạng thái")}<select id="debt-status-filter" value={debtFilter} onChange={e => setDebtFilter(e.target.value)}>
-          <option value="all">{t("Tất cả công nợ")}</option><option value="due">{t("Đến hạn & quá hạn")}</option><option value="red">{t("Báo động đỏ")}</option><option value="today">{t("Đến hạn hôm nay")}</option><option value="overdue">{t("Quá hạn")}</option><option value="upcoming">{t("Chưa đến hạn")}</option><option value="near">{t("Sắp đến hạn (1–7 ngày)")}</option><option value="future">{t("Chưa tới hạn (>7 ngày)")}</option><option value="attention">{t("Cần xử lý")}</option><option value="unknown">{t("Chưa có hạn")}</option><option value="paid">{t("Đã tất toán")}</option>
-        </select></label></div>}
+        {['receivables', 'payables'].includes(activeSection) && <div className="debt-detail-filter"><span>{phrase('§ chứng từ', activeSection === 'receivables' ? arPagination.totalItems : apPagination.totalItems)}</span><label htmlFor="debt-status-filter">{t("Trạng thái")}
+          <SearchableSelect
+            id="debt-status-filter"
+            value={debtFilter}
+            options={[
+              { value: 'all', label: t('Tất cả công nợ') },
+              { value: 'due', label: t('Đến hạn & quá hạn') },
+              { value: 'red', label: t('Báo động đỏ') },
+              { value: 'today', label: t('Đến hạn hôm nay') },
+              { value: 'overdue', label: t('Quá hạn') },
+              { value: 'upcoming', label: t('Chưa đến hạn') },
+              { value: 'near', label: t('Sắp đến hạn (1–7 ngày)') },
+              { value: 'future', label: t('Chưa tới hạn (>7 ngày)') },
+              { value: 'attention', label: t('Cần xử lý') },
+              { value: 'unknown', label: t('Chưa có hạn') },
+              { value: 'paid', label: t('Đã tất toán') },
+            ]}
+            onChange={setDebtFilter}
+            ariaLabel={t("Trạng thái công nợ")}
+            placeholder={t("Gõ tìm trạng thái…")}
+            allowClear
+            clearValue="all"
+          />
+        </label></div>}
         {activeSection === 'overview' && <DashboardOverview role={currentRole} items={sortedVendorItems} revenue={sortedRevenueRecords} categoryStats={categoryStats}
           reportDate={reportDate} ar={arSummary} ap={apSummary} alerts={alerts} monthlyData={monthlyData} onNavigate={onNavigate} onOpenItem={openItem} onResetFilters={resetFilters} onOpenAlert={openWorkAlert}
           onAssignAlert={canAssignAlert ? assignWorkAlert : undefined} onRemindAlert={canRemindBoss ? remindWorkAlert : undefined} tasks={allDirectoryTasks} accounts={accounts} reminders={allReminders} />}
-        {activeSection === 'orders' && <div className="order-view-tabs" aria-label={t("Chế độ tiến độ đơn hàng")}><button aria-pressed={orderView === 'fulfillment'} onClick={() => setOrderView('fulfillment')}>{t("Nhập & giao hàng")}</button><button aria-pressed={orderView === 'production'} onClick={() => setOrderView('production')}>{t("Sản xuất & đóng gói")}</button></div>}
-        {activeSection === 'orders' && orderView === 'fulfillment' && <FulfillmentTable onResetFilters={resetFilters} items={sortedVendorItems} reportDate={reportDate} onOpenItem={openItem} selectedFilter={debouncedOrderFilter} onFilterChange={setOrderFilter} tasks={allDirectoryTasks} accounts={accounts} reminders={allReminders} onRemindAlert={canRemindBoss ? remindWorkAlert : undefined} />}
+        {activeSection === 'orders' && (
+          <div className="order-view-tabs" aria-label={t("Chế độ tiến độ đơn hàng")}>
+            <button aria-pressed={orderView === 'inbound'} onClick={() => { setOrderView('inbound'); setOrderFilter('all'); }}>{t("1. Nhập hàng")}</button>
+            <button aria-pressed={orderView === 'outbound'} onClick={() => { setOrderView('outbound'); setOrderFilter('all'); }}>{t("2. Giao hàng đi")}</button>
+            <button aria-pressed={orderView === 'production'} onClick={() => setOrderView('production')}>{t("Sản xuất & đóng gói")}</button>
+          </div>
+        )}
+        {activeSection === 'orders' && orderView === 'inbound' && (
+          <FulfillmentTable
+            mode="inbound"
+            currentUser={currentUser}
+            onResetFilters={resetFilters}
+            items={sortedVendorItems}
+            reportDate={reportDate}
+            onOpenItem={item => openItem(item, 'inbound')}
+            selectedFilter={debouncedOrderFilter}
+            onFilterChange={setOrderFilter}
+            tasks={allDirectoryTasks}
+            accounts={accounts}
+            reminders={allReminders}
+            onRemindAlert={canRemindBoss ? remindWorkAlert : undefined}
+          />
+        )}
+        {activeSection === 'orders' && orderView === 'outbound' && (() => {
+          const allowedRowIds = new Set(sortedVendorItems.map(item => Number(item.rowId)));
+          const q = debouncedSearchQuery.trim().toLowerCase();
+          const filteredDeliveries = customerDeliveries.filter(d => {
+            if (selectedCategory !== 'Tất cả ngành hàng' || selectedOrigin !== 'Tất cả xuất xứ' || onlyMyRoleRedAlerts) {
+              if (!allowedRowIds.has(Number(d.poRowId))) return false;
+            }
+            if (!q) return true;
+            return [d.deliveryNo, d.poId, d.customerName, d.arDocNo, d.note].some(val =>
+              String(val || '').toLowerCase().includes(q)
+            );
+          });
+          return (
+            <FulfillmentTable
+              mode="outbound"
+              deliveries={filteredDeliveries}
+              currentUser={currentUser}
+              onResetFilters={resetFilters}
+              items={sortedVendorItems}
+              reportDate={reportDate}
+              onOpenItem={item => openItem(item, 'outbound')}
+              selectedFilter={debouncedOrderFilter}
+              onFilterChange={setOrderFilter}
+              tasks={allDirectoryTasks}
+              accounts={accounts}
+              reminders={allReminders}
+              onRemindAlert={canRemindBoss ? remindWorkAlert : undefined}
+            />
+          );
+        })()}
         {activeSection === 'orders' && orderView === 'production' && (
           <section className="space-y-4">
             <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-2xs space-y-3">
@@ -2104,7 +2392,7 @@ export default function App() {
               {workspaceError && <div className="workspace-error" role="alert" tabIndex={-1}><AlertTriangle size={18} /><span>{t(workspaceError)}</span></div>}
               {workspacePanel.type === 'ITEM_DETAIL' && (() => {
                 const orderAccess = canActorEditOrder(currentUser, workspacePanel.data, allDirectoryTasks, accounts);
-                return <ItemDetailPanel showFinancials={currentRole !== 'Sale' && (showRevenue || showReceivables || showPayables)} serverError={workspaceError} item={workspacePanel.data} reportDate={reportDate} canEdit={canUpdateProgress && orderAccess.allowed} readOnlyReason={canUpdateProgress && !orderAccess.allowed ? `${t('Đơn hàng này đang do')} ${orderAccess.ownerLabel} ${t('phụ trách. Bạn chỉ có quyền xem, không thể chỉnh sửa.')}` : ''} canLowerAlerts={isExecutiveRole(currentRole)} financials={itemFinancialSummary(workspacePanel.data, { revenue: showRevenue ? revenueRecords : [], receivables: classifiedAr, payables: classifiedAp })} isSaving={isSavingWorkspace} onSubmit={handleUpdateItemProgress} onClose={requestCloseWorkspace} tasks={allDirectoryTasks} accounts={accounts} reminders={allReminders} onRemindAlert={canRemindBoss ? remindWorkAlert : undefined} />;
+                return <ItemDetailPanel initialFormTab={workspacePanel.initialFormTab || (orderView === 'outbound' ? 'outbound' : 'inbound')} currentUser={currentUser} onRequestOrderTransfer={handleRequestOrderTransfer} onRespondOrderTransfer={handleRespondOrderTransfer} showFinancials={currentRole !== 'Sale' && (showRevenue || showReceivables || showPayables)} serverError={workspaceError} item={workspacePanel.data} reportDate={reportDate} canEdit={canUpdateProgress && orderAccess.allowed} readOnlyReason={canUpdateProgress && !orderAccess.allowed ? `${t('Đơn hàng này đang do')} ${orderAccess.ownerLabel} ${t('phụ trách. Bạn chỉ có quyền xem, không thể chỉnh sửa.')}` : ''} canLowerAlerts={isExecutiveRole(currentRole)} financials={itemFinancialSummary(workspacePanel.data, { revenue: showRevenue ? revenueRecords : [], receivables: classifiedAr, payables: classifiedAp })} isSaving={isSavingWorkspace} onSubmit={handleUpdateItemProgress} onClose={requestCloseWorkspace} tasks={allDirectoryTasks} accounts={accounts} reminders={allReminders} onRemindAlert={canRemindBoss ? remindWorkAlert : undefined} />;
               })()}
               {['ALLOCATE_AR', 'CREATE_AR', 'EDIT_AR', 'SUBMIT_AR', 'REVIEW_AR', 'CONFIRM_AR', 'RECORD_REV', 'CREATE_AP', 'EDIT_AP', 'SPLIT_AP', 'SUBMIT_AP', 'REVIEW_AP', 'PAY_AP'].includes(workspacePanel.type) &&
                 (!financeLoaded || (needsDebtRecord && !workspaceDebt) ? <p role="status">{t(dataError || (dataLoading || !financeLoaded

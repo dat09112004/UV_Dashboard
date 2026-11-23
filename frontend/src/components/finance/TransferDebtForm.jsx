@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { ArrowLeftRight, Info } from 'lucide-react';
 import { t } from '../../locales/i18n.js';
 import { formatMoney } from '../../utils/dashboardMetrics.js';
+import SearchableSelect from '../common/SearchableSelect.jsx';
 
 // Chức năng: Cửa sổ chọn kế toán nhận chuyển giao và nhập lý do chuyển giao hồ sơ công nợ (chỉ chuyển quyền sau khi bên nhận xác nhận)
 export default function TransferDebtForm({

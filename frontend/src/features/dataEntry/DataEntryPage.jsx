@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Download, Plus, Save, Trash2, Upload, FilePlus2, RefreshCw, UserCheck, Table2 } from 'lucide-react';
+import { Download, Plus, Save, Trash2, Upload, FilePlus2, RefreshCw, UserCheck, Table2, Truck, PackageCheck } from 'lucide-react';
 import { locale, phrase, t } from '../../locales/i18n.js';
 import { useDebouncedValue } from '../../hooks/useDebounce.js';
 import { useProgressivePagination } from '../../hooks/useProgressivePagination.js';
@@ -214,6 +214,7 @@ function QuickCreateOrderForm({ actor, existingItems, pending, onSaveDirect, onS
 function QuickUpdateProgressForm({ existingItems, initialOrder, pending, onSaveDirect, onStageDraft, onClose }) {
   const [selectedRowId, setSelectedRowId] = useState(() => String(initialOrder?.rowId || existingItems[0]?.rowId || ''));
   const target = existingItems.find(item => String(item.rowId) === String(selectedRowId)) || existingItems[0];
+  const [updateTab, setUpdateTab] = useState('inbound');
   const [progressMode, setProgressMode] = useState('today');
   const [nhapInput, setNhapInput] = useState('');
   const [deliveredInput, setDeliveredInput] = useState('');
@@ -297,7 +298,15 @@ function QuickUpdateProgressForm({ existingItems, initialOrder, pending, onSaveD
   };
 
   return <form className="workflow-form entry-quick-form" onSubmit={event => submitForm(event, 'save')}>
-    <div className="entry-quick-header">
+    <div className="entry-quick-header" style={{ display: 'flex', flexWrap: 'wrap', gap: 10, justifyContent: 'space-between', alignItems: 'center' }}>
+      <div className="order-view-tabs" role="tablist" aria-label={t('Chọn biểu mẫu cập nhật')}>
+        <button type="button" role="tab" aria-selected={updateTab === 'inbound'} aria-pressed={updateTab === 'inbound'} onClick={() => setUpdateTab('inbound')}>
+          <PackageCheck size={14} style={{ display: 'inline', marginRight: 5, verticalAlign: '-2px' }} />{t('1. Nhập hàng (Về kho)')}
+        </button>
+        <button type="button" role="tab" aria-selected={updateTab === 'outbound'} aria-pressed={updateTab === 'outbound'} onClick={() => setUpdateTab('outbound')}>
+          <Truck size={14} style={{ display: 'inline', marginRight: 5, verticalAlign: '-2px' }} />{t('2. Giao hàng đi (Cho khách)')}
+        </button>
+      </div>
       <div className="segmented-control progress-mode-switch" role="group" aria-label={t('Cách nhập số lượng tiến độ')}>
         <button type="button" aria-pressed={progressMode === 'today'} onClick={() => switchMode('today')}>{t('Nhập thêm hôm nay')}</button>
         <button type="button" aria-pressed={progressMode === 'cumulative'} onClick={() => switchMode('cumulative')}>{t('Cập nhật tổng lũy kế')}</button>
@@ -311,59 +320,62 @@ function QuickUpdateProgressForm({ existingItems, initialOrder, pending, onSaveD
           </option>)}
         </select>
       </label>
-      <label>
-        {t(progressMode === 'today' ? 'Nhập thêm về kho hôm nay' : 'SL đã về kho (lũy kế)')}
-        {!target?.inboundOnly && progressMode === 'cumulative' && <> <span className="required-mark" aria-hidden="true">*</span></>}
-        <input
-          type="text"
-          inputMode="decimal"
-          value={nhapInput}
-          onChange={e => { setNhapInput(e.target.value); setTouched(p => ({ ...p, nhap: true })); }}
-        />
-        {projection.nhapInspect.error && <small className="field-hint is-error" role="alert">{t(projection.nhapInspect.error)}</small>}
-        {!projection.nhapInspect.error && projection.nhapInspect.warning && <small className="field-hint is-warning">{t(projection.nhapInspect.warning)}</small>}
-      </label>
-      <label>
-        {t(progressMode === 'today' ? 'Giao thêm cho khách hôm nay' : 'SL đã giao khách (lũy kế)')}
-        <input
-          type="text"
-          inputMode="decimal"
-          value={deliveredInput}
-          onChange={e => { setDeliveredInput(e.target.value); setTouched(p => ({ ...p, delivered: true })); }}
-        />
-        {projection.deliveredInspect.error && <small className="field-hint is-error" role="alert">{t(projection.deliveredInspect.error)}</small>}
-        {!projection.deliveredInspect.error && projection.deliveredInspect.warning && <small className="field-hint is-warning">{t(projection.deliveredInspect.warning)}</small>}
-      </label>
-      <label>{t('Đơn giá nhập kho (VND)')}
-        <input type="text" inputMode="numeric" value={unitPriceVnd} onChange={e => setUnitPriceVnd(e.target.value)} />
-        {formatMoneyInputHint(unitPriceVnd) && <small className="field-hint" style={{ color: '#1558c9', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{formatMoneyInputHint(unitPriceVnd)}</small>}
-      </label>
-      <label>{t('Đơn giá bán ra (VND)')}
-        <input type="text" inputMode="numeric" value={saleUnitPriceVnd} onChange={e => setSaleUnitPriceVnd(e.target.value)} />
-        {formatMoneyInputHint(saleUnitPriceVnd) && <small className="field-hint" style={{ color: '#1558c9', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{formatMoneyInputHint(saleUnitPriceVnd)}</small>}
-      </label>
-      <label className="workflow-wide">{t('Khách hàng / Bên nhận giao hàng')}{(projection.projectedDelivered ?? 0) > 0 && <> <span className="required-mark" aria-hidden="true">*</span></>}
-        <input value={customerName} maxLength={255} onChange={e => setCustomerName(e.target.value)} />
-      </label>
-      <label>{t('Dự kiến về kho')}
-        <input type="date" value={expectedReceiptDate} onChange={e => setExpectedReceiptDate(e.target.value)} />
-      </label>
-      <label>{t('Ngày giao xác nhận')}{(projection.projectedDelivered ?? 0) > 0 && <> <span className="required-mark" aria-hidden="true">*</span></>}
-        <input type="date" max={businessToday()} value={actualDeliveryDate} onChange={e => { setActualDeliveryDate(e.target.value); setTouched(p => ({ ...p, actualDeliveryDate: true })); }} />
-        {touched.actualDeliveryDate && deliveryError && <small className="field-hint is-error" role="alert">{t(deliveryError)}</small>}
-      </label>
-      <label>{t('Thời gian dự kiến xuất hàng (ETD)')}
-        <input type="date" value={shipDateEtd} onChange={e => setShipDateEtd(e.target.value)} />
-      </label>
-      <label>{t('Thời gian dự kiến đến (ETA)')}
-        <input type="date" value={etaDate} onChange={e => setEtaDate(e.target.value)} />
-      </label>
-      <label>{t('Sản xuất (%)')}
-        <input type="number" min="0" max="100" step="0.1" value={onProcessPct} onChange={e => setOnProcessPct(e.target.value)} />
-      </label>
-      <label>{t('Đóng gói (%)')}
-        <input type="number" min="0" max="100" step="0.1" value={packagingPct} onChange={e => setPackagingPct(e.target.value)} />
-      </label>
+      {updateTab === 'inbound' ? <>
+        <label>
+          {t(progressMode === 'today' ? 'Nhập thêm về kho hôm nay' : 'SL đã về kho (lũy kế)')}
+          {!target?.inboundOnly && progressMode === 'cumulative' && <> <span className="required-mark" aria-hidden="true">*</span></>}
+          <input
+            type="text"
+            inputMode="decimal"
+            value={nhapInput}
+            onChange={e => { setNhapInput(e.target.value); setTouched(p => ({ ...p, nhap: true })); }}
+          />
+          {projection.nhapInspect.error && <small className="field-hint is-error" role="alert">{t(projection.nhapInspect.error)}</small>}
+          {!projection.nhapInspect.error && projection.nhapInspect.warning && <small className="field-hint is-warning">{t(projection.nhapInspect.warning)}</small>}
+        </label>
+        <label>{t('Đơn giá nhập kho (VND)')}
+          <input type="text" inputMode="numeric" value={unitPriceVnd} onChange={e => setUnitPriceVnd(e.target.value)} />
+          {formatMoneyInputHint(unitPriceVnd) && <small className="field-hint" style={{ color: '#1558c9', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{formatMoneyInputHint(unitPriceVnd)}</small>}
+        </label>
+        <label>{t('Dự kiến về kho')}
+          <input type="date" value={expectedReceiptDate} onChange={e => setExpectedReceiptDate(e.target.value)} />
+        </label>
+        <label>{t('Sản xuất (%)')}
+          <input type="number" min="0" max="100" step="0.1" value={onProcessPct} onChange={e => setOnProcessPct(e.target.value)} />
+        </label>
+        <label>{t('Đóng gói (%)')}
+          <input type="number" min="0" max="100" step="0.1" value={packagingPct} onChange={e => setPackagingPct(e.target.value)} />
+        </label>
+      </> : <>
+        <label>
+          {t(progressMode === 'today' ? 'Giao thêm cho khách hôm nay' : 'SL đã giao khách (lũy kế)')}
+          <input
+            type="text"
+            inputMode="decimal"
+            value={deliveredInput}
+            onChange={e => { setDeliveredInput(e.target.value); setTouched(p => ({ ...p, delivered: true })); }}
+          />
+          {projection.deliveredInspect.error && <small className="field-hint is-error" role="alert">{t(projection.deliveredInspect.error)}</small>}
+          {!projection.deliveredInspect.error && projection.deliveredInspect.warning && <small className="field-hint is-warning">{t(projection.deliveredInspect.warning)}</small>}
+        </label>
+        <label>{t('Đơn giá bán ra (VND)')}
+          <input type="text" inputMode="numeric" value={saleUnitPriceVnd} onChange={e => setSaleUnitPriceVnd(e.target.value)} />
+          {formatMoneyInputHint(saleUnitPriceVnd) && <small className="field-hint" style={{ color: '#1558c9', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{formatMoneyInputHint(saleUnitPriceVnd)}</small>}
+        </label>
+        <label className="workflow-wide">{t('Khách hàng / Bên nhận giao hàng')}{(projection.projectedDelivered ?? 0) > 0 && <> <span className="required-mark" aria-hidden="true">*</span></>}
+          <input value={customerName} maxLength={255} onChange={e => setCustomerName(e.target.value)} />
+        </label>
+        <label>{t('Ngày giao xác nhận')}{(projection.projectedDelivered ?? 0) > 0 && <> <span className="required-mark" aria-hidden="true">*</span></>}
+          <input type="date" max={businessToday()} value={actualDeliveryDate} onChange={e => { setActualDeliveryDate(e.target.value); setTouched(p => ({ ...p, actualDeliveryDate: true })); }} />
+          {touched.actualDeliveryDate && deliveryError && <small className="field-hint is-error" role="alert">{t(deliveryError)}</small>}
+        </label>
+        <label>{t('Thời gian dự kiến xuất hàng (ETD)')}
+          <input type="date" value={shipDateEtd} onChange={e => setShipDateEtd(e.target.value)} />
+        </label>
+        <label>{t('Thời gian dự kiến đến (ETA)')}
+          <input type="date" value={etaDate} onChange={e => setEtaDate(e.target.value)} />
+        </label>
+      </>}
       <label className="workflow-wide">{t('Lý do cập nhật')} <span className="required-mark" aria-hidden="true">*</span>
         <input value={changeReason} maxLength={500} onChange={e => { setChangeReason(e.target.value); setTouched(p => ({ ...p, changeReason: true })); }} />
         {touched.changeReason && reasonError && <small className="field-hint is-error" role="alert">{t(reasonError)}</small>}
@@ -724,6 +736,10 @@ export default function DataEntryPage({ actor, data, onSave, onDeliveryCreated, 
           onClick={() => { setQuickMode('create-order'); clearFeedback(); }}>
           <FilePlus2 size={15} />{t('Đơn nhập hàng NCC')}
         </button>
+        <button className="row-primary-button" type="button" aria-pressed={quickMode === 'create-delivery'} disabled={pending}
+          onClick={() => { setQuickMode('create-delivery'); clearFeedback(); }}>
+          <Truck size={15} />{t('Đơn giao hàng đi')}
+        </button>
         <button className="row-detail-button" type="button" aria-pressed={quickMode === 'update-progress'} disabled={pending}
           onClick={() => { setQuickTargetOrder(data.items[0] || null); setQuickMode('update-progress'); clearFeedback(); }}>
           <RefreshCw size={15} />{t('Cập nhật tiến độ')}
@@ -758,6 +774,26 @@ export default function DataEntryPage({ actor, data, onSave, onDeliveryCreated, 
         pending={pending}
         onSaveDirect={values => saveQuickRow(values)}
         onStageDraft={values => stageQuickRow(values)}
+        onClose={() => setQuickMode(null)}
+      />
+    </FormWindowDialog>
+
+    {/* Cửa sổ 1b: Tạo Đơn giao hàng đi cho Khách hàng (tự động phát sinh Công nợ phải thu AR) */}
+    <FormWindowDialog
+      open={writable && sheet.id === 'orders' && quickMode === 'create-delivery'}
+      title="Tạo đơn giao hàng đi (Giao khách)"
+      subtitle="Xuất hàng từ tồn kho PO cho khách hàng · Tự động tạo Công nợ phải thu (AR)"
+      size="lg"
+      busy={pending}
+      onClose={() => setQuickMode(null)}
+    >
+      <CustomerDeliveryForm
+        existingItems={data.items}
+        onCreated={res => {
+          setQuickMode(null);
+          setMessage(t(`Đã tạo phiếu giao hàng đi ${res?.delivery?.deliveryNo || ''} và tự động đồng bộ Công nợ phải thu.`));
+          onDeliveryCreated?.(res);
+        }}
         onClose={() => setQuickMode(null)}
       />
     </FormWindowDialog>

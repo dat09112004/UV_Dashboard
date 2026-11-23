@@ -736,7 +736,7 @@ export async function apiRequest(
     idempotencyKey,
     maxRetries = 0,
     retryDelayMs = 200,
-    requestTimeoutMs = 15000,
+    requestTimeoutMs = 25000,
     maxRetryWaitMs = 45000,
     operationDeadlineMs = 0,
   } = {}
@@ -810,15 +810,40 @@ export async function apiRequest(
     }
     const remainingDeadlineMs = deadlineAt > 0 ? Math.max(50, deadlineAt - now) : requestTimeoutMs;
     const perAttemptTimeoutMs = Math.max(50, Math.min(requestTimeoutMs, remainingDeadlineMs));
-    const attemptTimeoutSignal = AbortSignal.timeout(perAttemptTimeoutMs);
-    const attemptSignal = signal ? AbortSignal.any([signal, attemptTimeoutSignal]) : attemptTimeoutSignal;
+    const attemptController = new AbortController();
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      attemptController.abort();
+    }, perAttemptTimeoutMs);
+    const onExternalAbort = () => attemptController.abort();
+    if (signal) {
+      if (signal.aborted) {
+        clearTimeout(timer);
+        throw signal.reason instanceof Error ? signal.reason : new DOMException('Thao tác đã bị hủy.', 'AbortError');
+      }
+      signal.addEventListener('abort', onExternalAbort, { once: true });
+    }
     return fetch(`${apiBaseUrl}${path}`, {
       method,
       credentials: 'same-origin',
       headers: { ...headers, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-      signal: attemptSignal,
+      signal: attemptController.signal,
       ...(serializedBody !== undefined ? { body: serializedBody } : {}),
-    });
+    })
+      .catch(err => {
+        if (timedOut || err?.name === 'TimeoutError' || /signal timed out/i.test(String(err?.message || ''))) {
+          const timeoutErr = new Error('Kết nối tới máy chủ quá thời gian chờ. Vui lòng kiểm tra mạng và thử lại.');
+          timeoutErr.status = 408;
+          timeoutErr.code = 'REQUEST_TIMEOUT';
+          throw timeoutErr;
+        }
+        throw err;
+      })
+      .finally(() => {
+        clearTimeout(timer);
+        if (signal) signal.removeEventListener('abort', onExternalAbort);
+      });
   };
 
   let response;
@@ -1027,6 +1052,18 @@ export async function fetchTermsPolicyApi(signal) {
 }
 
 // Chức năng: Xử lý nghiệp vụ (changePasswordApi - Password Api) phục vụ xử lý dữ liệu trong api.js
+// Chức năng: Gửi yêu cầu Quên mật khẩu để máy chủ gửi mã OTP 6 chữ số từ noreply@uyenvu-international.com
+export async function requestPasswordResetOtpApi(email) {
+  const { data } = await apiRequest('POST', '/auth/forgot-password', { email });
+  return data;
+}
+
+// Chức năng: Xác thực mã OTP 6 chữ số và đặt lại mật khẩu mới
+export async function resetPasswordWithOtpApi({ email, otp, newPassword }) {
+  const { data } = await apiRequest('POST', '/auth/reset-password', { email, otp, newPassword });
+  return data;
+}
+
 export async function changePasswordApi(currentPassword, newPassword) {
   const { data } = await apiRequest('POST', '/auth/change-password', {
     currentPassword,
@@ -1124,6 +1161,26 @@ export async function fetchCustomerDeliveriesApi(signal) {
 // Chức năng: Tạo Đơn giao hàng cho Khách hàng và tự động phát sinh Công nợ phải thu (AR)
 export async function createCustomerDeliveryApi(payload) {
   const { data } = await apiRequest('POST', '/orders/deliveries', payload);
+  return data;
+}
+
+// Chức năng: Gửi yêu cầu chuyển giao đơn hàng PO sang nhân viên Sale khác (chờ người nhận đồng ý)
+export async function requestOrderTransferApi(rowId, payload) {
+  const { data } = await apiRequest(
+    'POST',
+    `/orders/items/${encodeURIComponent(rowId)}/transfer`,
+    payload
+  );
+  return data;
+}
+
+// Chức năng: Phản hồi yêu cầu chuyển giao đơn hàng PO (accept / reject / cancel)
+export async function respondOrderTransferApi(rowId, payload) {
+  const { data } = await apiRequest(
+    'POST',
+    `/orders/items/${encodeURIComponent(rowId)}/transfer/respond`,
+    payload
+  );
   return data;
 }
 

@@ -18,8 +18,7 @@ export function resolveOrderResponsible(item, tasks = [], accounts = []) {
 
   if (item.assignedSaleId) {
     addPerson(item.assignedSaleId, item.assignedSaleName || item.createdByName);
-  }
-  if (item.ownerType === 'sale_self_owned' || item.createdByRole === 'Sale') {
+  } else if (item.ownerType === 'sale_self_owned' || item.createdByRole === 'Sale') {
     if (item.createdById) {
       addPerson(item.createdById, item.createdByName || item.assignedSaleName);
     }
