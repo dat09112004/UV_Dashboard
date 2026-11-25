@@ -25,7 +25,10 @@ export function localizeInvalidInput(event) {
         : validity.rangeUnderflow ? phrase('Giá trị phải từ § trở lên.', field.min)
           : validity.rangeOverflow ? phrase('Giá trị không được vượt §.', field.max)
             : validity.stepMismatch ? t('Vui lòng nhập giá trị đúng bước quy định.')
-              : t('Giá trị đã nhập không hợp lệ.');
+              : validity.tooShort ? phrase('Vui lòng nhập ít nhất § ký tự.', field.minLength)
+                : validity.tooLong ? phrase('Vui lòng nhập tối đa § ký tự.', field.maxLength)
+                  : validity.patternMismatch ? t('Giá trị không đúng định dạng yêu cầu.')
+                    : t('Giá trị đã nhập không hợp lệ.');
   field.setCustomValidity(message);
   localizedMessages.set(field, message);
 }

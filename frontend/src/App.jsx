@@ -24,7 +24,7 @@ import {
   executeFinanceActionApi,
   isFinanceSnapshotPayload,
   logoutApi,
-  updateOrderProgressApi, fetchOrdersApi, fetchFinanceStateApi, fetchOrderDetailApi, fetchTermsPolicyApi,
+  updateOrderProgressApi, fetchOrdersApi, fetchFinanceStateApi, fetchOrderDetailApi,
   getStoredAuthSession,
   LOGOUT_BROADCAST_KEY,
   parseCrossTabLogoutPayload,
@@ -108,7 +108,7 @@ export default function App() {
   const [loginPassword, setLoginPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
-  const [acceptedTerms, setAcceptedTerms] = useState(false);
+  const [, setAcceptedTerms] = useState(false);
   const [loginError, setLoginError] = useState('');
   const [loginNotice, setLoginNotice] = useState('');
   const [isSigningIn, setIsSigningIn] = useState(false);
@@ -128,8 +128,8 @@ export default function App() {
     ],
   };
   const [policy, setPolicy] = useState(() => FALLBACK_TERMS_POLICY);
-  const [policyError, setPolicyError] = useState('');
-  const [policyAttempt, setPolicyAttempt] = useState(0);
+  const [policyError] = useState('');
+  const [, setPolicyAttempt] = useState(0);
   // App nội bộ công ty: không bắt buộc tải hoặc tích đồng ý điều khoản khi đăng nhập
   const [forgotMode, setForgotMode] = useState(false);
   const [forgotStep, setForgotStep] = useState('email'); // 'email' | 'verify'
@@ -784,7 +784,7 @@ export default function App() {
       showPayables && currentRole !== 'Sale' ? classifiedAp : []
     ).filter(alert =>
       alertReminderType === 'finance' ? alert.type !== 'orders' : alert.type === alertReminderType)
-    : [], [currentUser, alertReminderType, classifiedItems, classifiedAr, classifiedAp]);
+    : [], [currentUser, currentRole, showOrders, showReceivables, showPayables, alertReminderType, classifiedItems, classifiedAr, classifiedAp]);
   const showEmployeeReminders = showReminders && (activeSection === 'overview' ||
     (alertReminderType === 'orders' && activeSection === 'orders') ||
     (alertReminderType === 'finance' && ['receivables', 'payables'].includes(activeSection)));
@@ -1124,9 +1124,9 @@ export default function App() {
     try {
       const res = await claimDebtApi(debtType, row.id, finance?.revision);
       await syncFinanceSnapshotImmediate(res, debtType, row.id);
-      showToast(`${t('Đã nhận xử lý hồ sơ')} ${row.docNo || row.id}.`, 'success');
+      showToast(`Đã nhận xử lý hồ sơ ${row.docNo || row.id}.`, 'success');
     } catch (err) {
-      showToast(err?.message || t('Không thể nhận xử lý hồ sơ này.'), 'error');
+      showToast(err?.message || 'Không thể nhận xử lý hồ sơ này.', 'error');
     }
   };
 
@@ -1135,9 +1135,9 @@ export default function App() {
     try {
       const res = await assignDebtApi(debtType, row.id, assigneeId, finance?.revision);
       await syncFinanceSnapshotImmediate(res, debtType, row.id);
-      showToast(assigneeId ? `${t('Đã phân công phụ trách hồ sơ')} ${row.docNo || row.id}.` : `${t('Đã chuyển hồ sơ')} ${row.docNo || row.id} ${t('về hàng chờ chung.')}`, 'success');
+      showToast(assigneeId ? `Đã phân công phụ trách hồ sơ ${row.docNo || row.id}.` : `Đã chuyển hồ sơ ${row.docNo || row.id} về hàng chờ chung.`, 'success');
     } catch (err) {
-      showToast(err?.message || t('Không thể cập nhật người phụ trách.'), 'error');
+      showToast(err?.message || 'Không thể cập nhật người phụ trách.', 'error');
     }
   };
 
@@ -1149,10 +1149,10 @@ export default function App() {
       setWorkspaceDirty(false);
       setShowDiscardDialog(false);
       setWorkspacePanel(null);
-      showToast(`${t('Chuyển giao thành công: đã gửi yêu cầu chuyển hồ sơ')} ${row.docNo || row.id}. ${t('Đang chờ bên nhận xác nhận.')}`, 'success');
+      showToast(`Chuyển giao thành công: đã gửi yêu cầu chuyển hồ sơ ${row.docNo || row.id}. Đang chờ bên nhận xác nhận.`, 'success');
       return true;
     } catch (err) {
-      showToast(err?.message || t('Không thể gửi yêu cầu chuyển giao.'), 'error');
+      showToast(err?.message || 'Không thể gửi yêu cầu chuyển giao.', 'error');
       return false;
     }
   };
@@ -1164,12 +1164,12 @@ export default function App() {
       await syncFinanceSnapshotImmediate(res, debtType, row.id);
       showToast(
         accept
-          ? `${t('Đã xác nhận nhận chuyển giao hồ sơ')} ${row.docNo || row.id}.`
-          : `${t('Đã từ chối nhận chuyển giao hồ sơ')} ${row.docNo || row.id}.`,
+          ? `Đã xác nhận nhận chuyển giao hồ sơ ${row.docNo || row.id}.`
+          : `Đã từ chối nhận chuyển giao hồ sơ ${row.docNo || row.id}.`,
         'success'
       );
     } catch (err) {
-      showToast(err?.message || t('Không thể phản hồi yêu cầu chuyển giao.'), 'error');
+      showToast(err?.message || 'Không thể phản hồi yêu cầu chuyển giao.', 'error');
     }
   };
 
@@ -1772,7 +1772,7 @@ export default function App() {
                           </td>
                           <td className="py-3 px-3">
                             <div className="font-semibold text-slate-800">{t(row.vendorName)}</div>
-                            <div className="text-[11px] text-slate-500">{row.category}</div>
+                            <div className="text-[11px] text-slate-500">{t(row.category)}</div>
                           </td>
                           <td className="py-3 px-3">
                             <div className="font-bold text-slate-900">{t(row.vendorItemNo)}</div>
@@ -1863,7 +1863,7 @@ export default function App() {
                         }`}
                       >
                         <div className="flex items-center justify-between">
-                          <span className="text-xs font-bold truncate">{cat.category}</span>
+                          <span className="text-xs font-bold truncate">{t(cat.category)}</span>
                           {cat.redCount > 0 && (
                             <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-600 text-white shrink-0">
                               {cat.redCount}{t(" Đỏ")}</span>
@@ -2102,7 +2102,7 @@ export default function App() {
                         </td>
                         <td className="py-3 px-4 font-medium text-slate-800">
                           <div>{t(ar.sku)}</div>
-                          <div className="text-xs text-slate-500">{ar.category}</div>
+                          <div className="text-xs text-slate-500">{t(ar.category)}</div>
                         </td>
                         <td className="py-3 px-4 text-center whitespace-nowrap">
                           <div className="font-bold text-slate-800">{ar.dueDate}</div>
@@ -2227,11 +2227,11 @@ export default function App() {
                         </td>
                         <td className="py-3 px-4 font-bold text-slate-900 whitespace-nowrap">
                           <div>{ap.docNo}</div>
-                          <div className="text-xs font-mono text-slate-500">NCC: {ap.vendorNo}</div>
+                          <div className="text-xs font-mono text-slate-500">{t('NCC:')} {ap.vendorNo}</div>
                         </td>
                         <td className="py-3 px-4 font-semibold text-slate-800">
                           <div>{t(ap.supplierName)}</div>
-                          <div className="text-xs text-slate-500">{ap.category}</div>
+                          <div className="text-xs text-slate-500">{t(ap.category)}</div>
                           {apAccess.unassigned ? (
                             <div className="text-[11px] font-semibold text-amber-700 mt-0.5">{t('Hàng chờ chung · Chưa có người phụ trách')}</div>
                           ) : (

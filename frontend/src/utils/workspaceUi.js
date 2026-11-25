@@ -91,7 +91,7 @@ export function inspectQuantityInput(value, { allowZero = true, max, unit = '' }
     const cleanValue = roundedMillis / 1000;
     const formatted = formatQtyValue(cleanValue) + (unit ? ` ${unit}` : '');
     const error = !allowZero && cleanValue <= 0 ? 'Số lượng đặt phải lớn hơn 0.' :
-      Number.isFinite(max) && cleanValue > max ? `Số lượng không được vượt ${formatQtyValue(max)}${unit ? ` ${unit}` : ''}.` : '';
+      Number.isFinite(max) && cleanValue > max ? `Số lượng không được vượt ${formatQtyValue(max) + (unit ? ` ${unit}` : '') }.` : '';
     return { raw: String(cleanValue), normalized: String(cleanValue), value: cleanValue, formatted, warning: '', error };
   }
   const text = String(value).trim();
@@ -110,7 +110,7 @@ export function inspectQuantityInput(value, { allowZero = true, max, unit = '' }
     normalized = text.replace(/[. ,]/g, '');
     if (/^[1-9]\d{0,2}\.\d{3}$/.test(text)) {
       const parsed = Number(normalized);
-      warning = `Hệ thống đang hiểu "${text}" là ${formatQtyValue(parsed)}${unit ? ` ${unit}` : ''} (dấu tách hàng nghìn). Nếu muốn nhập số lẻ thập phân, hãy dùng dấu phẩy (ví dụ 1,5).`;
+      warning = `Hệ thống đang hiểu "${text}" là ${formatQtyValue(parsed) + (unit ? ` ${unit}` : '')} (dấu tách hàng nghìn). Nếu muốn nhập số lẻ thập phân, hãy dùng dấu phẩy (ví dụ 1,5).`;
     }
   } else if (/^[1-9]\d{0,2}(?:,\d{3})+\.\d{1,3}$/.test(text)) {
     normalized = String(Number(text.replace(/,/g, '')));
@@ -133,7 +133,7 @@ export function inspectQuantityInput(value, { allowZero = true, max, unit = '' }
   const num = Number(normalized);
   const formatted = formatQtyValue(num) + (unit ? ` ${unit}` : '');
   const error = !allowZero && num <= 0 ? 'Số lượng đặt phải lớn hơn 0.' :
-    Number.isFinite(max) && num > max ? `Số lượng không được vượt ${formatQtyValue(max)}${unit ? ` ${unit}` : ''}.` : '';
+    Number.isFinite(max) && num > max ? `Số lượng không được vượt ${formatQtyValue(max) + (unit ? ` ${unit}` : '') }.` : '';
   return { raw: text, normalized: String(num), value: num, formatted, warning, error };
 }
 

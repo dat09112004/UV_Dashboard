@@ -4,25 +4,20 @@ import { englishPartnerName } from './partnerNames.js';
 const storageKey = 'uv-language';
 const listeners = new Set();
 
-// Chức năng: Xử lý nghiệp vụ (initialLanguage - Language) phục vụ xử lý dữ liệu trong i18n.js
 function initialLanguage() {
   try { return globalThis.localStorage?.getItem(storageKey) === 'en' ? 'en' : 'vi'; }
   catch { return 'vi'; }
 }
 
 let language = initialLanguage();
-// Chức năng: Lấy (getLanguage - Language) phục vụ xử lý dữ liệu trong i18n.js
 export const getLanguage = () => language;
-// Chức năng: Xử lý nghiệp vụ (locale - locale) phục vụ xử lý dữ liệu trong i18n.js
 export const locale = () => language === 'en' ? 'en-GB' : 'vi-VN';
 
-// Chức năng: Xử lý nghiệp vụ (subscribeLanguage - Language) phục vụ xử lý dữ liệu trong i18n.js
 export function subscribeLanguage(listener) {
   listeners.add(listener);
   return () => listeners.delete(listener);
 }
 
-// Chức năng: Thiết lập (setLanguage - Language) phục vụ xử lý dữ liệu trong i18n.js
 export function setLanguage(next) {
   if (next === language || (next !== 'en' && next !== 'vi')) return;
   language = next;
@@ -30,55 +25,76 @@ export function setLanguage(next) {
   listeners.forEach(listener => listener());
 }
 
-// Chức năng: Xử lý nghiệp vụ (escapeRegex - Regex) phục vụ xử lý dữ liệu trong i18n.js
 const escapeRegex = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const templates = Object.keys(english).filter(key => key.includes('§'))
+// Whitespace belongs to the rendered sentence, not to its dictionary key.
+// Normalising both sides also supports decomposed Vietnamese Unicode from APIs.
+const normalise = value => value.trim().normalize('NFC');
+const labels = new Map(Object.entries(english).map(([source, target]) => [normalise(source), target.trim()]));
+const templates = [...labels.keys()].filter(key => key.includes('§'))
   .sort((a, b) => b.replaceAll('§', '').length - a.replaceAll('§', '').length)
-  .map(key => [
-  key, new RegExp('^' + key.split('§').map(escapeRegex).join('([\\s\\S]*?)') + '$'),
-]);
+  .map(key => {
+    // A counter must never consume a whole business status or sentence. This
+    // avoids interpreting 'Cần tách chứng từ' as a document count.
+    const numericLead = /^§(?: (?:dòng|báo động đỏ|chứng từ|công việc cảnh báo|mã hàng|ngành hàng|triệu VND|việc cần theo dõi|khoản|chưa đủ xác nhận giao|phiếu giao)|\/§)/.test(key);
+    const chunks = key.split('§').map(escapeRegex);
+    const pattern = chunks.reduce((result, chunk, index) => result + (index === 0 ? ''
+      : numericLead && index === 1 ? '([\\d.,\\s]+)' : '([\\s\\S]*?)') + chunk, '');
+    return [key, new RegExp('^' + pattern + '$')];
+  });
 
-// Chức năng: Xử lý nghiệp vụ (interpolate - interpolate) phục vụ xử lý dữ liệu trong i18n.js
 function interpolate(template, values) {
   let index = 0;
+  // A callback preserves literal dollar signs and replacement tokens in user data.
   return template.replace(/§/g, () => values[index++] ?? '');
 }
 
-// Chức năng: Xử lý nghiệp vụ (englishGrammar - Grammar) phục vụ xử lý dữ liệu trong i18n.js
 function englishGrammar(message) {
-  return message.replace(/(?<![\d.,])1 (days|items|documents|alerts|balances|product categories)\b/g, (_, noun) =>
-    '1 ' + (noun === 'product categories' ? 'product category' : noun.slice(0, -1)));
+  const singular = {
+    days: 'day', items: 'item', documents: 'document', alerts: 'alert', balances: 'balance',
+    'product categories': 'product category', 'delivery notes': 'delivery note',
+    rows: 'row', orders: 'order', tasks: 'task', reminders: 'reminder',
+    records: 'record', times: 'time', seconds: 'second', worksheets: 'worksheet',
+  };
+  return message.replace(/(?<![\d.,])1 ((?:new |draft |critical |PO line )?)(product categories|delivery notes|days|items|documents|alerts|balances|rows|orders|tasks|reminders|records|times|seconds|worksheets)\b/g,
+    (_, modifier, noun) => '1 ' + modifier + singular[noun]);
 }
 
-// Chức năng: Xử lý nghiệp vụ (englishLabel - Label) phục vụ xử lý dữ liệu trong i18n.js
-const englishLabel = value => Object.hasOwn(english, value) ? english[value] : englishPartnerName(value);
+const englishLabel = value => labels.get(normalise(value)) ?? englishPartnerName(value);
 
-// Chức năng: Dịch chuỗi ngôn ngữ (translate - translate) phục vụ xử lý dữ liệu trong i18n.js
-export function translate(value, target = language) {
+export function translate(value, target = language, depth = 0) {
   if (target !== 'en' || typeof value !== 'string' || !value.trim()) return value;
-  const key = value.trim();
-  const lead = value.slice(0, value.indexOf(key));
-  const tail = value.slice(lead.length + key.length);
+  const trimmed = value.trim();
+  const key = trimmed.normalize('NFC');
+  const lead = value.slice(0, value.indexOf(trimmed));
+  const tail = value.slice(lead.length + trimmed.length);
   const label = englishLabel(key);
   if (label !== undefined) return lead + label + tail;
-  // Historic audit messages and business statuses are stored in Vietnamese.
-  // Translate known sentence patterns without changing captured references or notes.
-  if (!/[À-ỹ]/.test(key)) return value;
+  if (!/[À-ỹ]/.test(key) || depth >= 8) return value;
+  // More specific patterns win. Translate nested system messages while leaving
+  // unknown names, document codes and free-form text intact.
   for (const [source, pattern] of templates) {
     const match = pattern.exec(key);
     if (match) {
-      const values = match.slice(1).map(part => englishLabel(part) ?? part);
-      return lead + englishGrammar(interpolate(english[source], values)) + tail;
+      const values = match.slice(1).map(part => translate(part, target, depth + 1));
+      return lead + englishGrammar(interpolate(labels.get(source), values)) + tail;
     }
+  }
+  if (key.startsWith('· ')) {
+    return lead + '· ' + translate(key.slice(2), target, depth + 1) + tail;
+  }
+  // Legacy summaries concatenate status, due date, note and reminder fragments.
+  // Preserve their separators, and translate each recognised fragment separately.
+  const fragments = key.split(/(?=\s+·\s+)/);
+  if (fragments.length > 1) {
+    return lead + fragments.map(part => translate(part, target, depth + 1)).join('') + tail;
   }
   return value;
 }
 
-// Chức năng: Xử lý nghiệp vụ (t - t) phục vụ xử lý dữ liệu trong i18n.js
 export const t = value => translate(value);
 
-// Chức năng: Xử lý nghiệp vụ (phrase - phrase) phục vụ xử lý dữ liệu trong i18n.js
 export function phrase(source, ...values) {
-  const message = interpolate(language === 'en' ? (english[source] ?? source) : source, values);
-  return language === 'en' ? englishGrammar(message) : message;
+  if (language !== 'en') return interpolate(source, values);
+  const template = englishLabel(source) ?? source;
+  return englishGrammar(interpolate(template, values.map(value => translate(value))));
 }

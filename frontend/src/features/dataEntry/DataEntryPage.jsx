@@ -57,11 +57,6 @@ function QuickCreateOrderForm({ actor, existingItems, pending, onSaveDirect, onS
     expectedReceiptDate: '', etaDate: '', changeReason: 'Tạo đơn hàng mới',
   });
   const [touched, setTouched] = useState({});
-  // Chức năng: Cập nhật (update - update) phục vụ xử lý dữ liệu trong DataEntryPage.jsx
-  const update = (key, val) => {
-    setValues(prev => ({ ...prev, [key]: val }));
-    setTouched(prev => ({ ...prev, [key]: true }));
-  };
   const qtyFeedback = inspectEntryCell('orderedQty', values.orderedQty, values);
   const priceFeedback = inspectEntryCell('unitPriceVnd', values.unitPriceVnd, values);
   const releasedParsed = parseBusinessDate(values.releasedPoDate);
@@ -453,7 +448,7 @@ function CustomerDeliveryForm({ existingItems, onCreated, onClose }) {
           {pool.map(item => {
             const avail = Math.max(0, Number(item.tonDau || 0) + Number(item.nhap || 0) - Number(item.deliveredQty || 0));
             return <option key={item.rowId} value={item.rowId}>
-              {item.poId} · {t(item.vendorItemNo)} ({t('NCC')}: {item.vendorName} · {t('Khả dụng')}: {formatQuantity(avail)} {item.unit})
+              {item.poId} · {t(item.vendorItemNo)} ({t('NCC')}: {t(item.vendorName)} · {t('Khả dụng')}: {formatQuantity(avail)} {item.unit})
             </option>;
           })}
         </select>
@@ -480,7 +475,7 @@ function CustomerDeliveryForm({ existingItems, onCreated, onClose }) {
       </label>
     </fieldset>
     {totalSaleVnd > 0 && <div className="projected-total-banner" role="status">
-      <span>{t('Giá trị đơn giao hàng (Công nợ phải thu):')} <b>{new Intl.NumberFormat('vi-VN').format(totalSaleVnd)} VND</b></span>
+      <span>{t('Giá trị đơn giao hàng (Công nợ phải thu):')} <b>{new Intl.NumberFormat(locale()).format(totalSaleVnd)} VND</b></span>
     </div>}
     {formError && <div className="workspace-error" role="alert" style={{ marginTop: 10 }}><span>{t(formError)}</span></div>}
     <div className="workflow-footer">
@@ -522,7 +517,7 @@ export default function DataEntryPage({ actor, data, onSave, onDeliveryCreated, 
 
   const writable = sheet ? canWriteSheet(actor, sheet) : false;
   const canEdit = writable && editing;
-  const rows = sheet ? draft.sheets[sheet.id] || [blankRow()] : [blankRow()];
+  const rows = useMemo(() => sheet ? draft.sheets[sheet.id] || [blankRow()] : [blankRow()], [sheet, draft.sheets]);
   const draftRowCount = rows.filter(hasValues).length;
   const canEditExisting = Boolean(sheet && writable && sheet.id === 'orders');
 
@@ -657,7 +652,7 @@ export default function DataEntryPage({ actor, data, onSave, onDeliveryCreated, 
     if (feIssues.length > 0) {
       setIssues(feIssues);
     }
-    setMessage(phrase('Đã thêm § dòng vào bản nháp. Kiểm tra rồi bấm Lưu dữ liệu để nối tiếp vào dữ liệu hiện có.', cleanedImported.length));
+    setMessage(`Đã thêm ${cleanedImported.length} dòng vào bản nháp. Kiểm tra rồi bấm Lưu dữ liệu để nối tiếp vào dữ liệu hiện có.`);
   });
   // Chức năng: Kiểm tra lỗi Frontend rồi Lưu các dòng trong bản nháp nối tiếp vào dữ liệu hiện có
   const save = () => run(async () => {
@@ -678,7 +673,7 @@ export default function DataEntryPage({ actor, data, onSave, onDeliveryCreated, 
     if (result.issues?.length) { setIssues(result.issues); return; }
     setRows([blankRow()]);
     setEditing(false);
-    setMessage(t('Đã lưu dữ liệu từ bản nháp nối tiếp vào dữ liệu hiện có và cập nhật các phân hệ liên quan.'));
+    setMessage('Đã lưu dữ liệu từ bản nháp nối tiếp vào dữ liệu hiện có và cập nhật các phân hệ liên quan.');
   });
   // Chức năng: Lưu (saveQuickRow - Quick Row) phục vụ xử lý dữ liệu trong DataEntryPage.jsx
   const saveQuickRow = (values, expectedVersion) => run(async () => {
@@ -688,7 +683,7 @@ export default function DataEntryPage({ actor, data, onSave, onDeliveryCreated, 
     if (result.issues?.length) { setIssues(result.issues); return; }
     setQuickMode(null);
     setQuickTargetOrder(null);
-    setMessage(t('Đã lưu dữ liệu và cập nhật các phân hệ liên quan.'));
+    setMessage('Đã lưu dữ liệu và cập nhật các phân hệ liên quan.');
   });
   // Chức năng: Xử lý nghiệp vụ (stageQuickRow - Quick Row) phục vụ xử lý dữ liệu trong DataEntryPage.jsx
   const stageQuickRow = (values, expectedVersion) => {
@@ -702,7 +697,7 @@ export default function DataEntryPage({ actor, data, onSave, onDeliveryCreated, 
     setQuickMode(null);
     setQuickTargetOrder(null);
     setEditing(true);
-    setMessage(phrase('Đã thêm § dòng vào bản nháp. Kiểm tra rồi bấm Lưu dữ liệu.', 1));
+    setMessage('Đã thêm 1 dòng vào bản nháp. Kiểm tra rồi bấm Lưu dữ liệu.');
   };
 
   return <section className="analytics-card management-panel entry-workspace" aria-busy={pending}>
@@ -759,8 +754,8 @@ export default function DataEntryPage({ actor, data, onSave, onDeliveryCreated, 
     {/* Cửa sổ 1: Thêm đơn hàng PO mới */}
     <FormWindowDialog
       open={writable && sheet.id === 'orders' && quickMode === 'create-order'}
-      title="Thêm đơn hàng mới (PO)"
-      subtitle="Kiểm tra Mã PO duy nhất · Nhập trực tiếp hoặc đưa vào bản nháp"
+      title={t('Thêm đơn hàng mới (PO)')}
+      subtitle={t('Kiểm tra Mã PO duy nhất · Nhập trực tiếp hoặc đưa vào bản nháp')}
       size="lg"
       busy={pending}
       onClose={() => setQuickMode(null)}
@@ -781,8 +776,8 @@ export default function DataEntryPage({ actor, data, onSave, onDeliveryCreated, 
     {/* Cửa sổ 1b: Tạo Đơn giao hàng đi cho Khách hàng (tự động phát sinh Công nợ phải thu AR) */}
     <FormWindowDialog
       open={writable && sheet.id === 'orders' && quickMode === 'create-delivery'}
-      title="Tạo đơn giao hàng đi (Giao khách)"
-      subtitle="Xuất hàng từ tồn kho PO cho khách hàng · Tự động tạo Công nợ phải thu (AR)"
+      title={t('Tạo đơn giao hàng đi (Giao khách)')}
+      subtitle={t('Xuất hàng từ tồn kho PO cho khách hàng · Tự động tạo Công nợ phải thu (AR)')}
       size="lg"
       busy={pending}
       onClose={() => setQuickMode(null)}
@@ -791,7 +786,7 @@ export default function DataEntryPage({ actor, data, onSave, onDeliveryCreated, 
         existingItems={data.items}
         onCreated={res => {
           setQuickMode(null);
-          setMessage(t(`Đã tạo phiếu giao hàng đi ${res?.delivery?.deliveryNo || ''} và tự động đồng bộ Công nợ phải thu.`));
+          setMessage(`Đã tạo phiếu giao hàng đi ${res?.delivery?.deliveryNo || ''} và tự động đồng bộ Công nợ phải thu.`);
           onDeliveryCreated?.(res);
         }}
         onClose={() => setQuickMode(null)}
@@ -801,7 +796,7 @@ export default function DataEntryPage({ actor, data, onSave, onDeliveryCreated, 
     {/* Cửa sổ 2: Cập nhật tiến độ theo đơn hàng */}
     <FormWindowDialog
       open={writable && sheet.id === 'orders' && quickMode === 'update-progress'}
-      title="Cập nhật tiến độ theo đơn hàng"
+      title={t('Cập nhật tiến độ theo đơn hàng')}
       subtitle={quickTargetOrder ? `${quickTargetOrder.poId} · ${quickTargetOrder.vendorName}` : 'Đơn hàng PO'}
       size="lg"
       busy={pending}
@@ -824,7 +819,7 @@ export default function DataEntryPage({ actor, data, onSave, onDeliveryCreated, 
     {/* Cửa sổ 3: Tải tệp Excel vào bản nháp */}
     <FormWindowDialog
       open={Boolean(importFile && writable)}
-      title="Tải tệp Excel vào bản nháp"
+      title={t('Tải tệp Excel vào bản nháp')}
       subtitle={importFile?.name || ''}
       size="md"
       busy={pending}

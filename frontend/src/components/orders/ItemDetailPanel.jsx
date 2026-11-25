@@ -248,7 +248,7 @@ export default function ItemDetailPanel({
     </section>
     {canEdit && <button type="button" className="item-edit-shortcut" onClick={() => { formRef.current?.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth', block: 'start' }); formRef.current?.querySelector('input:not([type=hidden])')?.focus({ preventScroll: true }); }}>{t(isInboundTab ? "Cập nhật nhập hàng " : "Cập nhật giao hàng đi ")}<span aria-hidden="true">↓</span></button>}
     {item.totalValueVnd != null && <div className="item-business-summary">
-      <span>{t('Mã nhóm hàng')} <b>{item.category}</b></span>
+      <span>{t('Mã nhóm hàng')} <b>{t(item.category)}</b></span>
       <span>{t('Giá nhập kho')} <b>{formatMoney(item.unitPriceVnd)} / {item.unit}</b></span>
       {item.saleUnitPriceVnd > 0 && <span>{t('Giá bán ra')} <b>{formatMoney(item.saleUnitPriceVnd)} / {item.unit}</b></span>}
       <span>{t('Giá trị PO')} <b>{formatMoney(item.totalValueVnd)}</b></span>

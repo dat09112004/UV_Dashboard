@@ -280,7 +280,7 @@ export const entrySheetName = (schema, language = getLanguage()) =>
   language === 'en' ? translate(schema.label, language) : schema.name;
 
 // Chức năng: Mô tả định dạng kiểu dữ liệu và ví dụ mẫu cho từng cột trong Tệp mẫu Excel
-export function getColumnFormatMetadata(col, schemaId = 'orders') {
+function columnFormatMetadata(col, schemaId = 'orders') {
   const requiredBySheet = {
     orders: new Set(['poId', 'vendorItemNo', 'vendorNo', 'vendorName', 'category', 'releasedPoDate', 'unit', 'orderedQty']),
     revenue: new Set(['docNo', 'poId', 'customerName', 'recordDate', 'dueDate', 'shippedQty', 'netRevenue', 'basis']),
@@ -300,7 +300,7 @@ export function getColumnFormatMetadata(col, schemaId = 'orders') {
       typeLabel: 'Ngày tháng (YYYY-MM-DD hoặc DD/MM/YYYY)',
       requiredLabel: reqText,
       example: '2026-11-18',
-      note: `${col.label} (${reqText})\nKiểu: Ngày tháng (YYYY-MM-DD hoặc DD/MM/YYYY)\nVí dụ: 2026-11-18`,
+      noteType: 'Ngày tháng (YYYY-MM-DD hoặc DD/MM/YYYY)',
     };
   }
   if (col.format === 'money' || ['unitPriceVnd', 'netRevenue', 'originalAmount', 'amount', 'cashCollected', 'allocatedPaid', 'remaining', 'allocatedAmount'].includes(col.key)) {
@@ -309,7 +309,7 @@ export function getColumnFormatMetadata(col, schemaId = 'orders') {
       typeLabel: 'Số nguyên VND (không âm, tối đa 1.000 tỷ)',
       requiredLabel: reqText,
       example: 140000,
-      note: `${col.label} (${reqText})\nKiểu: Số nguyên VND\nVí dụ: 140000 hoặc 42000000`,
+      noteType: 'Số nguyên VND', noteExample: '140000 hoặc 42000000',
     };
   }
   if (col.format === 'percent' || ['onProcessPct', 'packagingPct'].includes(col.key)) {
@@ -318,16 +318,16 @@ export function getColumnFormatMetadata(col, schemaId = 'orders') {
       typeLabel: 'Tỷ lệ phần trăm (Số từ 0 đến 100)',
       requiredLabel: reqText,
       example: 80,
-      note: `${col.label} (${reqText})\nKiểu: Tỷ lệ % (0 - 100)\nVí dụ: 80`,
+      noteType: 'Tỷ lệ % (0 - 100)',
     };
   }
   if (col.format === 'quantity' || col.type === 'number') {
     return {
       numFmt: '#,##0.###',
-      typeLabel: 'Số lượng (Số dương, tối đa 3 chữ số thập phân)',
+      typeLabel: col.key === 'orderedQty' ? 'Số lượng (Số dương, tối đa 3 chữ số thập phân)' : 'Số lượng (Không âm, tối đa 3 chữ số thập phân)',
       requiredLabel: reqText,
       example: 1000,
-      note: `${col.label} (${reqText})\nKiểu: Số lượng (> 0)\nVí dụ: 1000`,
+      noteType: col.key === 'orderedQty' ? 'Số lượng (> 0)' : 'Số lượng (>= 0)',
     };
   }
   if (col.type === 'boolean') {
@@ -336,7 +336,7 @@ export function getColumnFormatMetadata(col, schemaId = 'orders') {
       typeLabel: 'Logic (Có / Không hoặc true / false)',
       requiredLabel: reqText,
       example: 'Có',
-      note: `${col.label} (${reqText})\nKiểu: Có / Không`,
+      noteType: 'Có / Không',
     };
   }
   const examples = {
@@ -364,13 +364,29 @@ export function getColumnFormatMetadata(col, schemaId = 'orders') {
     typeLabel: col.key === 'poId' ? 'Văn bản (Mã PO duy nhất, không được trùng)' : 'Văn bản (Text)',
     requiredLabel: reqText,
     example: examples[col.key] || 'Văn bản',
-    note: `${col.label} (${reqText})\nKiểu: ${col.key === 'poId' ? 'Mã PO duy nhất (không trùng lặp)' : 'Văn bản'}\nVí dụ: ${examples[col.key] || 'Nhập nội dung'}`,
+    noteType: col.key === 'poId' ? 'Mã PO duy nhất (không trùng lặp)' : 'Văn bản',
+    noteExample: examples[col.key] || 'Nhập nội dung',
   };
+}
+
+// Localise all workbook guidance using the requested export language, even when
+// it differs from the current interface language. Examples are template data.
+export function getColumnFormatMetadata(col, schemaId = 'orders', language = getLanguage()) {
+  const meta = columnFormatMetadata(col, schemaId);
+  const localize = value => translate(value, language);
+  const note = [
+    `${localize(col.label)} (${localize(meta.requiredLabel)})`,
+    `${localize('Kiểu:')} ${localize(meta.noteType)}`,
+    `${localize('Ví dụ:')} ${localize(meta.noteExample ?? meta.example)}`
+  ].join('\n');
+  return { ...meta, typeLabel: localize(meta.typeLabel), requiredLabel: localize(meta.requiredLabel),
+    example: localize(meta.example), note };
 }
 
 // Chức năng: Tải xuống tệp Excel dữ liệu hoặc Tệp mẫu có định dạng đầy đủ kiểu dữ liệu (numFmt, DataValidation, ghi chú cột và bảng Hướng dẫn kiểu dữ liệu)
 export async function downloadEntryWorkbook(schema, columns, rows, language = getLanguage()) {
   const { default: ExcelJS } = await import('exceljs');
+  const localize = value => translate(value, language);
   const book = new ExcelJS.Workbook();
   const isTemplate = !Array.isArray(rows) || rows.length === 0;
   // Khi xuất tệp mẫu, luôn ẩn cột Mã dòng (rowId) để tránh lỗi trùng/sai rowId khi tải lên nối tiếp
@@ -381,7 +397,7 @@ export async function downloadEntryWorkbook(schema, columns, rows, language = ge
   const name = entrySheetName(schema, language);
   const sheet = book.addWorksheet(name, { views: [{ state: 'frozen', ySplit: 1 }] });
   sheet.columns = effectiveColumns.map(col => {
-    const meta = getColumnFormatMetadata(col, schema.id);
+    const meta = getColumnFormatMetadata(col, schema.id, language);
     return {
       key: col.key,
       header: translate(col.label, language),
@@ -403,7 +419,7 @@ export async function downloadEntryWorkbook(schema, columns, rows, language = ge
     // Định dạng đầy đủ kiểu dữ liệu và Data Validation trên 50 dòng đầu của Tệp mẫu để người dùng nhập chuẩn xác trên Excel
     effectiveColumns.forEach((col, idx) => {
       const colNumber = idx + 1;
-      const meta = getColumnFormatMetadata(col, schema.id);
+      const meta = getColumnFormatMetadata(col, schema.id, language);
       const headerCell = sheet.getRow(1).getCell(colNumber);
       headerCell.note = meta.note;
 
@@ -417,11 +433,11 @@ export async function downloadEntryWorkbook(schema, columns, rows, language = ge
             allowBlank: true,
             formulae: [0, 100],
             showInputMessage: true,
-            promptTitle: col.label,
+            promptTitle: localize(col.label),
             prompt: `${meta.typeLabel} (${meta.requiredLabel})`,
             showErrorMessage: true,
-            errorTitle: 'Sai kiểu dữ liệu',
-            error: 'Tỷ lệ phần trăm phải nằm trong khoảng từ 0 đến 100.',
+            errorTitle: localize('Sai kiểu dữ liệu'),
+            error: localize('Tỷ lệ phần trăm phải nằm trong khoảng từ 0 đến 100.'),
           };
         } else if (col.format === 'money') {
           cell.dataValidation = {
@@ -430,11 +446,11 @@ export async function downloadEntryWorkbook(schema, columns, rows, language = ge
             allowBlank: true,
             formulae: [0],
             showInputMessage: true,
-            promptTitle: col.label,
-            prompt: `${meta.typeLabel} (${meta.requiredLabel}). Ví dụ: ${meta.example}`,
+            promptTitle: localize(col.label),
+            prompt: `${meta.typeLabel} (${meta.requiredLabel}). ${localize('Ví dụ:')} ${meta.example}`,
             showErrorMessage: true,
-            errorTitle: 'Sai kiểu dữ liệu tiền tệ',
-            error: 'Số tiền VND phải là số nguyên không âm.',
+            errorTitle: localize('Sai kiểu dữ liệu tiền tệ'),
+            error: localize('Số tiền VND phải là số nguyên không âm.'),
           };
         } else if (col.format === 'quantity' || col.type === 'number') {
           cell.dataValidation = {
@@ -443,11 +459,11 @@ export async function downloadEntryWorkbook(schema, columns, rows, language = ge
             allowBlank: true,
             formulae: [0],
             showInputMessage: true,
-            promptTitle: col.label,
-            prompt: `${meta.typeLabel} (${meta.requiredLabel}). Ví dụ: ${meta.example}`,
+            promptTitle: localize(col.label),
+            prompt: `${meta.typeLabel} (${meta.requiredLabel}). ${localize('Ví dụ:')} ${meta.example}`,
             showErrorMessage: true,
-            errorTitle: 'Sai kiểu dữ liệu số lượng',
-            error: 'Số lượng phải là số không âm.',
+            errorTitle: localize('Sai kiểu dữ liệu số lượng'),
+            error: localize('Số lượng phải là số không âm.'),
           };
         } else {
           cell.dataValidation = {
@@ -455,25 +471,25 @@ export async function downloadEntryWorkbook(schema, columns, rows, language = ge
             allowBlank: true,
             formulae: ['TRUE'],
             showInputMessage: true,
-            promptTitle: col.label,
-            prompt: `${meta.typeLabel} (${meta.requiredLabel}). Ví dụ: ${meta.example}`,
+            promptTitle: localize(col.label),
+            prompt: `${meta.typeLabel} (${meta.requiredLabel}). ${localize('Ví dụ:')} ${meta.example}`,
           };
         }
       }
     });
 
     // Bổ sung trang tính thứ 2: "Huong_dan_kieu_du_lieu" mô tả chi tiết kiểu dữ liệu, bắt buộc/tùy chọn và ví dụ cho từng cột
-    const guideSheet = book.addWorksheet('Huong_dan_kieu_du_lieu', { views: [{ state: 'frozen', ySplit: 1 }] });
+    const guideSheet = book.addWorksheet(language === 'en' ? 'Data format guide' : 'Huong_dan_kieu_du_lieu', { views: [{ state: 'frozen', ySplit: 1 }] });
     guideSheet.columns = [
-      { key: 'colName', header: 'Tên cột trong Tệp mẫu', width: 28 },
-      { key: 'required', header: 'Bắt buộc / Tùy chọn', width: 22 },
-      { key: 'dataType', header: 'Định dạng kiểu dữ liệu chuẩn', width: 44 },
-      { key: 'example', header: 'Giá trị mẫu hợp lệ', width: 32 },
+      { key: 'colName', header: localize('Tên cột trong Tệp mẫu'), width: 28 },
+      { key: 'required', header: localize('Bắt buộc / Tùy chọn'), width: 22 },
+      { key: 'dataType', header: localize('Định dạng kiểu dữ liệu chuẩn'), width: 44 },
+      { key: 'example', header: localize('Giá trị mẫu hợp lệ'), width: 32 },
     ];
     guideSheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
     guideSheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1558C9' } };
     effectiveColumns.forEach(col => {
-      const meta = getColumnFormatMetadata(col, schema.id);
+      const meta = getColumnFormatMetadata(col, schema.id, language);
       guideSheet.addRow({
         colName: translate(col.label, language),
         required: meta.requiredLabel,

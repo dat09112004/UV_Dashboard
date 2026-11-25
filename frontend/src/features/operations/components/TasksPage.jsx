@@ -611,8 +611,8 @@ export default function TasksPage({
     {/* Cửa sổ Khung 1: Giao việc tới Đơn hàng (Ai xử lý) */}
     <FormWindowDialog
       open={Boolean(managing && !reReviewOnly && activeFrameWindow === 'order')}
-      title="Khung 1 · Giao việc tới Đơn hàng (Ai xử lý)"
-      subtitle="Phân công xử lý Đơn hàng PO do Sếp tạo"
+      title={t('Khung 1 · Giao việc tới Đơn hàng (Ai xử lý)')}
+      subtitle={t('Phân công xử lý Đơn hàng PO do Sếp tạo')}
       size="lg"
       busy={busy || creating}
       onClose={() => setActiveFrameWindow(null)}
@@ -715,8 +715,8 @@ export default function TasksPage({
     {/* Cửa sổ Khung 2: Giao những việc bên ngoài */}
     <FormWindowDialog
       open={Boolean(managing && !reReviewOnly && activeFrameWindow === 'external')}
-      title="Khung 2 · Giao những việc bên ngoài"
-      subtitle="Phân công Công việc Điều hành & Tác vụ Bên ngoài"
+      title={t('Khung 2 · Giao những việc bên ngoài')}
+      subtitle={t('Phân công Công việc Điều hành & Tác vụ Bên ngoài')}
       size="lg"
       busy={busy || creating}
       onClose={() => setActiveFrameWindow(null)}
@@ -774,7 +774,7 @@ export default function TasksPage({
     {/* Cửa sổ Giao việc nhanh từ Nhắc việc chờ xử lý */}
     <FormWindowDialog
       open={Boolean(managing && !reReviewOnly && activeQuickReminder)}
-      title="Giao việc nhanh từ nhắc việc"
+      title={t('Giao việc nhanh từ nhắc việc')}
       subtitle={activeQuickReminder ? `${activeQuickReminder.reference} · ${activeQuickReminder.subject}` : ''}
       size="md"
       busy={busy}

@@ -1035,7 +1035,7 @@ export function deletePayable(state, user, payload) {
 }
 
 // Chức năng: Kế toán lập đề nghị chi cho khoản Công nợ phải trả để trình CEO/Admin phê duyệt
-export function submitPayable(state, user, payload, today = businessToday()) {
+export function submitPayable(state, user, payload) {
   requirePermission(user, 'payables.submit', state);
   const next = clone(state);
   const row = next.payables.find(p => p.id === payload.id);

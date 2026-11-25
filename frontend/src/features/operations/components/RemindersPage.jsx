@@ -406,8 +406,8 @@ export default function RemindersPage({
       {/* Cửa sổ 1: Gửi nhắc việc cho Ban Giám đốc */}
       <FormWindowDialog
         open={Boolean(canRemindBoss && (showCreateForm || initialDraft))}
-        title="Gửi nhắc việc cho Ban Giám đốc"
-        subtitle="Nhắc việc & Điều phối Cảnh báo đỏ"
+        title={t('Gửi nhắc việc cho Ban Giám đốc')}
+        subtitle={t('Nhắc việc & Điều phối Cảnh báo đỏ')}
         size="lg"
         busy={busy}
         onClose={() => { setShowCreateForm(false); onClearDraft?.(); }}
@@ -436,7 +436,7 @@ export default function RemindersPage({
                   );
                   return (
                     <option key={alert.id} value={alert.id}>
-                      [{typeLabel(alert.type)}] {alert.reference} — {alert.label} ({info.isAssigned ? `Đã giao: ${info.assigneesText}` : 'Chưa giao việc'})
+                      [{t(typeLabel(alert.type))}] {alert.reference} — {t(alert.label)} ({t(info.isAssigned ? `Đã giao: ${info.assigneesText}` : 'Chưa giao việc')})
                     </option>
                   );
                 })}
@@ -521,7 +521,7 @@ export default function RemindersPage({
       {/* Cửa sổ 2: Giao việc nhanh ngay tại nhắc việc */}
       <FormWindowDialog
         open={Boolean(isExec && activeQuickReminder)}
-        title="Giao việc nhanh ngay tại nhắc việc"
+        title={t('Giao việc nhanh ngay tại nhắc việc')}
         subtitle={activeQuickReminder ? `${activeQuickReminder.reference} · ${activeQuickReminder.subject}` : ''}
         size="lg"
         busy={busy}

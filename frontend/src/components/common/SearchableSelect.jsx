@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, X } from 'lucide-react';
-import { t } from '../../locales/i18n.js';
+import { getLanguage, translate, t } from '../../locales/i18n.js';
 
 // Chức năng: Chuẩn hóa chuỗi không dấu tiếng Việt để gõ lọc nhanh chính xác
 function normalizeFilterText(value) {
@@ -27,6 +27,7 @@ export default function SearchableSelect({
   allowClear = false,
   clearValue = '',
 }) {
+  const language = getLanguage();
   const containerRef = useRef(null);
   const inputRef = useRef(null);
   const [open, setOpen] = useState(false);
@@ -56,10 +57,10 @@ export default function SearchableSelect({
     const q = normalizeFilterText(query);
     if (!q) return normalizedOptions;
     return normalizedOptions.filter(opt => {
-      const hay = normalizeFilterText(`${opt.label} ${opt.keywords}`);
+      const hay = normalizeFilterText(`${t(opt.label)} ${translate(opt.label, language)} ${opt.keywords}`);
       return hay.includes(q);
     });
-  }, [normalizedOptions, query]);
+  }, [normalizedOptions, query, language]);
 
   useEffect(() => {
     setHighlightIdx(0);
@@ -83,7 +84,7 @@ export default function SearchableSelect({
     setQuery('');
   };
 
-  const displayValue = open ? query : (selectedOption?.label ?? '');
+  const displayValue = open ? query : t(selectedOption?.label ?? '');
 
   return (
     <div
@@ -99,10 +100,10 @@ export default function SearchableSelect({
         role="combobox"
         aria-expanded={open}
         aria-autocomplete="list"
-        aria-label={ariaLabel}
+        aria-label={t(ariaLabel)}
         disabled={disabled}
         value={displayValue}
-        placeholder={open ? t(placeholder) : (selectedOption?.label || t(placeholder))}
+        placeholder={open ? t(placeholder) : (t(selectedOption?.label) || t(placeholder))}
         onFocus={() => {
           if (disabled) return;
           setOpen(true);
@@ -242,7 +243,7 @@ export default function SearchableSelect({
                     fontWeight: isSelected ? 600 : 400,
                   }}
                 >
-                  {opt.label}
+                  {t(opt.label)}
                 </li>
               );
             })

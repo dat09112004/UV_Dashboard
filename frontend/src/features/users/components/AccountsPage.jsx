@@ -116,17 +116,17 @@ export default function AccountsPage({ accounts, departmentNavigation, actor, on
 
   const roleFilterOptions = useMemo(
     () => [
-      { value: 'all', label: t('Tất cả vai trò') },
-      ...availableRoles.map(r => ({ value: r, label: t(ROLE_PROFILES[r]?.label || r), keywords: r })),
+      { value: 'all', label: 'Tất cả vai trò' },
+      ...availableRoles.map(r => ({ value: r, label: ROLE_PROFILES[r]?.label || r, keywords: r })),
     ],
     [availableRoles]
   );
 
   const statusFilterOptions = useMemo(
     () => [
-      { value: 'all', label: t('Tất cả trạng thái') },
-      { value: 'active', label: t('Đang hoạt động') },
-      { value: 'inactive', label: t('Đã khóa') },
+      { value: 'all', label: 'Tất cả trạng thái' },
+      { value: 'active', label: 'Đang hoạt động' },
+      { value: 'inactive', label: 'Đã khóa' },
     ],
     []
   );
@@ -245,7 +245,7 @@ export default function AccountsPage({ accounts, departmentNavigation, actor, on
       onClose={() => setConfirmation(null)} onCancel={event => { if (busy) event.preventDefault(); }}>
       {confirmation && <>
         <h2 id="account-confirm-title">{t(confirmation.title)}</h2>
-        <p id="account-confirm-description">{confirmation.description}</p>
+        <p id="account-confirm-description">{phrase(confirmation.description, ...(confirmation.descriptionValues || []))}</p>
         {confirmError && <p className="account-confirm-error" role="alert">{t(confirmError)}</p>}
         <div className="workflow-footer">
           <button type="button" disabled={busy} onClick={() => dialogRef.current.close()}>{t('Hủy')}</button>
@@ -258,8 +258,8 @@ export default function AccountsPage({ accounts, departmentNavigation, actor, on
     {/* Cửa sổ Tạo tài khoản mới (Bắt buộc nhập Mã nhân viên UV...) */}
     <FormWindowDialog
       open={showCreateModal}
-      title="Tạo tài khoản mới"
-      subtitle="Quản lý tài khoản & Phân quyền phòng ban"
+      title={t('Tạo tài khoản mới')}
+      subtitle={t('Quản lý tài khoản & Phân quyền phòng ban')}
       size="md"
       busy={busy}
       onClose={() => setShowCreateModal(false)}
@@ -357,7 +357,8 @@ export default function AccountsPage({ accounts, departmentNavigation, actor, on
             <NavigationFields roles={roles} account={editing} departmentNavigation={departmentNavigation}
               onCancel={closeEditor} onApplyDepartment={(role, navigation) => requestConfirmation({
                 action: 'apply-department-navigation', title: 'Áp dụng cho toàn bộ phòng ban', label: 'Áp dụng',
-                description: phrase('Dùng các trang đã chọn cho tất cả tài khoản thuộc § và làm mặc định cho tài khoản mới?', t(DEPARTMENT_ROLES[role])),
+                description: 'Dùng các trang đã chọn cho tất cả tài khoản thuộc § và làm mặc định cho tài khoản mới?',
+                descriptionValues: [DEPARTMENT_ROLES[role]],
                 payload: { role, sections: navigation, navigation },
               })} />
           </fieldset>
@@ -448,7 +449,8 @@ export default function AccountsPage({ accounts, departmentNavigation, actor, on
                   aria-label={`${t(actionLabel)} · ${account.name}`} title={t(actionLabel)}
                   onClick={() => requestConfirmation({
                     action: 'set-account-status', title: actionLabel, label: locked ? 'Mở khóa' : 'Khóa tài khoản', danger: !locked,
-                    description: phrase(locked ? 'Cho phép § đăng nhập lại?' : 'Khóa đăng nhập của §? Các công việc đã giao vẫn được lưu.', account.name),
+                    description: locked ? 'Cho phép § đăng nhập lại?' : 'Khóa đăng nhập của §? Các công việc đã giao vẫn được lưu.',
+                    descriptionValues: [account.name],
                     payload: { id: account.id, expectedStatus: account.status, expectedTokenVersion: account.tokenVersion, status: locked ? 'active' : 'inactive' },
                   })}><Icon size={17} aria-hidden="true" /></button>}
               </div>}</td>

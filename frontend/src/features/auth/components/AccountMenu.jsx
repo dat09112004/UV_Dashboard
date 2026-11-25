@@ -1,4 +1,4 @@
-import { getLanguage, t } from "../../../locales/i18n.js";
+import { getLanguage, locale, t } from "../../../locales/i18n.js";
 import React, { useEffect, useId, useRef, useState } from "react";
 import { Bug, ChevronDown, Eye, EyeOff, KeyRound, LogOut, Mail, UserRound, X } from "lucide-react";
 import { changePassword } from "../services/authService.js";
@@ -19,7 +19,7 @@ function PasswordField({ name, label, autoComplete }) {
     <label htmlFor={id}>{t(label)}</label>
     <div className="profile-password-input">
       <input id={id} name={name} type={visible ? "text" : "password"} autoComplete={autoComplete}
-        required maxLength={128} minLength={autoComplete === "new-password" ? 8 : undefined} />
+        required maxLength={128} minLength={autoComplete === "new-password" ? 12 : undefined} />
       <button type="button" onClick={() => setVisible(!visible)} aria-label={visibilityLabel} title={visibilityLabel}>
         {visible ? <EyeOff size={18} /> : <Eye size={18} />}
       </button>
@@ -34,7 +34,8 @@ function AccountDialog({ view, user, onClose, onChangeView, onPasswordChanged })
   const noteId = useId();
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
-  const [bugSubject, setBugSubject] = useState(() => `[Uyen Vu ERP] Báo cáo lỗi hệ thống - ${user.name}`);
+  const [bugSubject, setBugSubject] = useState(null);
+  const defaultBugSubject = t(`[Uyen Vu ERP] Báo cáo lỗi hệ thống - ${user.name}`);
   const [bugDescription, setBugDescription] = useState("");
   const [bugSentNotice, setBugSentNotice] = useState("");
   const isPassword = view === "password";
@@ -85,15 +86,15 @@ function AccountDialog({ view, user, onClose, onChangeView, onPasswordChanged })
   // Chức năng: Gửi báo cáo lỗi qua ứng dụng email tới dat.lt@uyenvu-international.com
   const submitBugReport = event => {
     event.preventDefault();
-    const subjectText = bugSubject.trim() || `[Uyen Vu ERP] Báo cáo lỗi hệ thống - ${user.name}`;
+    const subjectText = (bugSubject ?? defaultBugSubject).trim() || defaultBugSubject;
     const bodyLines = [
-      "Kính gửi bộ phận kỹ thuật Uyên Vũ International,",
+      t("Kính gửi bộ phận kỹ thuật Uyên Vũ International,"),
       "",
-      `Người báo lỗi: ${user.name} (${user.email})`,
-      `Thời gian: ${new Date().toLocaleString("vi-VN")}`,
+      t(`Người báo lỗi: ${user.name} (${user.email})`),
+      t(`Thời gian: ${new Date().toLocaleString(locale(), { timeZone: "Asia/Ho_Chi_Minh" })}`),
       "",
-      "Mô tả chi tiết lỗi:",
-      bugDescription.trim() || "( Đính kèm mô tả / ảnh chụp màn hình lỗi )",
+      t("Mô tả chi tiết lỗi:"),
+      bugDescription.trim() || t("( Đính kèm mô tả / ảnh chụp màn hình lỗi )"),
     ];
     const mailtoUrl = `mailto:${BUG_REPORT_EMAIL}?subject=${encodeURIComponent(subjectText)}&body=${encodeURIComponent(bodyLines.join("\n"))}`;
     if (typeof window !== "undefined") {
@@ -128,7 +129,7 @@ function AccountDialog({ view, user, onClose, onChangeView, onPasswordChanged })
         <PasswordField name="newPassword" label={t("Mật khẩu mới")} autoComplete="new-password" />
         <PasswordField name="confirmPassword" label={t("Xác nhận mật khẩu mới")} autoComplete="new-password" />
       </fieldset>
-      <p id={noteId} className="profile-dialog-note">{t("Tối thiểu 12  ký tự. Đăng nhập lại sau khi lưu.")}</p>
+      <p id={noteId} className="profile-dialog-note">{t("Tối thiểu 12 ký tự. Đăng nhập lại sau khi lưu.")}</p>
       {error && <p className="profile-form-error" role="alert">{t(error)}</p>}
       <div className="profile-dialog-actions">
         <button type="button" className="profile-secondary" onClick={closeDialog} disabled={saving}>{t("Hủy")}</button>
@@ -146,7 +147,7 @@ function AccountDialog({ view, user, onClose, onChangeView, onPasswordChanged })
             type="text"
             required
             maxLength={160}
-            value={bugSubject}
+            value={bugSubject ?? defaultBugSubject}
             onChange={e => setBugSubject(e.target.value)}
             className="mt-1 w-full h-9 rounded-lg border border-slate-300 px-3 text-xs text-slate-900 bg-white"
           />
@@ -210,7 +211,7 @@ export default function AccountMenu({ user, onLogout, onPasswordChanged }) {
   // Chức năng: Đóng (close - close) phục vụ xử lý dữ liệu trong AccountMenu.jsx
   const close = () => { setView(null); trigger.current?.focus(); };
 
-  const mailtoReportHref = `mailto:${BUG_REPORT_EMAIL}?subject=${encodeURIComponent(`[Uyen Vu ERP] Báo cáo lỗi hệ thống - ${user.name} (${user.email})`)}`;
+  const mailtoReportHref = `mailto:${BUG_REPORT_EMAIL}?subject=${encodeURIComponent(t(`[Uyen Vu ERP] Báo cáo lỗi hệ thống - ${user.name} (${user.email})`))}`;
 
   return <div ref={root} className="profile-menu"
     onKeyDown={event => {

@@ -46,7 +46,7 @@ export function CategoryProgressChart({ stats }) {
       </ResponsiveContainer>
     </div>
     <div className="progress-series-key"><span><i className="solid-key" />{t("Sản xuất")}</span><span><i className="striped-key" />{t("Đóng gói")}</span></div>
-    <div className="category-risk-list">{stats.filter(row => row.totalItems > 0).map(row => <div key={row.category} className="category-risk-row"><strong>{row.category}</strong><div className="category-risk-badges">{row.redCount > 0 && <span className="risk-count critical">{row.redCount}{t(" báo động")}</span>}{row.warningCount > 0 && <span className="risk-count warning">{row.warningCount}{t(" theo dõi")}</span>}{!row.redCount && !row.warningCount && <span className="risk-count normal">{t("Theo kế hoạch")}</span>}</div></div>)}</div>
+    <div className="category-risk-list">{stats.filter(row => row.totalItems > 0).map(row => <div key={row.category} className="category-risk-row"><strong>{t(row.category)}</strong><div className="category-risk-badges">{row.redCount > 0 && <span className="risk-count critical">{row.redCount}{t(" báo động")}</span>}{row.warningCount > 0 && <span className="risk-count warning">{row.warningCount}{t(" theo dõi")}</span>}{!row.redCount && !row.warningCount && <span className="risk-count normal">{t("Theo kế hoạch")}</span>}</div></div>)}</div>
   </div>;
 }
 
@@ -381,7 +381,7 @@ export function RevenueTaxProfitabilityPanel({ revenueRecords = [], items = [] }
             {rows.map(row => (
               <tr key={row.period} className="bg-white hover:bg-slate-50">
                 <td className="py-3 px-3.5 font-bold text-slate-900 whitespace-nowrap">
-                  {row.period} <span className="text-xs font-normal text-slate-500">({row.invoiceCount} CT)</span>
+                  {row.period} <span className="text-xs font-normal text-slate-500">({row.invoiceCount} {t('CT')})</span>
                 </td>
                 <td className="py-3 px-3.5 text-right font-mono font-semibold text-slate-900">{formatMoney(row.netRevenue)}</td>
                 <td className="py-3 px-3.5 text-right font-mono text-slate-600">{formatMoney(row.cogs)}</td>

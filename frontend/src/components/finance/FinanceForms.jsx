@@ -1,5 +1,5 @@
 import { locale, t } from '../../locales/i18n.js';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { formatDate, formatMoney } from '../../utils/dashboardMetrics.js';
 import { businessToday, dateInputValue } from '../../utils/business.js';
 import {
@@ -253,7 +253,6 @@ function FinanceCreatorOwnershipBanner({ actor, isEdit = false, row = null }) {
   const effectiveName = isEdit
     ? (row?.assignedAccountantName || row?.createdByName || row?.pic || actor?.name)
     : actor?.name;
-  const effectiveEmail = isEdit ? (row?.createdByEmail || '') : (actor?.email || '');
   if (!effectiveName && !effectiveRole) return null;
   const isAccountantCreator =
     effectiveRole === 'Accountant' || row?.ownerType === 'accountant_self_owned';
@@ -282,7 +281,7 @@ function FinanceCreatorOwnershipBanner({ actor, isEdit = false, row = null }) {
   );
 }
 
-export function InvoiceForm({ actor = null, items = [], finance, onAction, onClose }) {
+export function InvoiceForm({ items = [], finance, onAction, onClose }) {
   const effectiveItems = useResolvedOrderItems(items, finance);
   const [itemSearch, setItemSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
@@ -351,11 +350,14 @@ export function InvoiceForm({ actor = null, items = [], finance, onAction, onClo
     (initialOrder ? `Nghiệm thu & xuất hóa đơn đơn hàng ${initialOrder.poId} - ${initialOrder.vendorItemNo}` : '')
   );
 
+  const [basisIsUserText, setBasisIsUserText] = useState(Boolean(initialUnlinkedAr?.commitmentNote));
+
   // Chức năng: Áp dụng (applyOrderToInvoice - Order To Invoice) phục vụ xử lý dữ liệu trong FinanceForms.jsx
-  const applyOrderToInvoice = nextOrder => {
+  const applyOrderToInvoice = useCallback(nextOrder => {
     if (!nextOrder) return;
     setRowId(String(nextOrder.rowId));
     const pendingAr = findUnlinkedArForOrder(nextOrder, finance);
+    setBasisIsUserText(Boolean(pendingAr?.commitmentNote));
     setDocNoVal(pendingAr?.docNo || suggestUniqueDocNo('HD', nextOrder, allRevenueDocs));
     const linkedCust =
       pendingAr?.customerName && !isSupplierName(pendingAr.customerName, effectiveItems, finance)
@@ -388,13 +390,13 @@ export function InvoiceForm({ actor = null, items = [], finance, onAction, onClo
       );
       setBasisVal(`Nghiệm thu & xuất hóa đơn đơn hàng ${nextOrder.poId} - ${nextOrder.vendorItemNo}`);
     }
-  };
+  }, [effectiveItems, finance, allRevenueDocs, recordDate]);
 
   useEffect(() => {
     if (!rowId && effectiveItems.length > 0) {
       applyOrderToInvoice(effectiveItems[0]);
     }
-  }, [effectiveItems.length]);
+  }, [effectiveItems, rowId, applyOrderToInvoice]);
 
   useEffect(() => {
     if (debouncedItemSearch.trim() && filteredItems.length > 0) {
@@ -402,7 +404,7 @@ export function InvoiceForm({ actor = null, items = [], finance, onAction, onClo
         applyOrderToInvoice(filteredItems[0]);
       }
     }
-  }, [debouncedItemSearch, filteredItems]);
+  }, [debouncedItemSearch, filteredItems, rowId, applyOrderToInvoice]);
 
   const maxQty = selectedOrder
     ? Math.max(
@@ -439,7 +441,7 @@ export function InvoiceForm({ actor = null, items = [], finance, onAction, onClo
         >
           <option value="all">{t("Tất cả ngành hàng")}</option>
           {existingCategories.map(cat => (
-            <option key={cat} value={cat}>{cat}</option>
+            <option key={cat} value={cat}>{t(cat)}</option>
           ))}
         </select>
       </label>
@@ -464,7 +466,7 @@ export function InvoiceForm({ actor = null, items = [], finance, onAction, onClo
         >
           {filteredItems.map(item => (
             <option key={item.rowId} value={item.rowId}>
-              {item.poId} · {t(item.vendorItemNo)} · {item.category} · SL đặt: {item.orderedQty || 0} {item.unit || 'pcs'} (Đã giao: {item.deliveredQty || 0}) · {formatMoney(computeOrderTotalVnd(item) || 0)}
+              {item.poId} · {t(item.vendorItemNo)} · {t(item.category)} · {t('SL đặt:')} {item.orderedQty || 0} {item.unit || 'pcs'} ({t('Đã giao:')} {item.deliveredQty || 0}) · {formatMoney(computeOrderTotalVnd(item) || 0)}
             </option>
           ))}
         </select>
@@ -575,8 +577,8 @@ export function InvoiceForm({ actor = null, items = [], finance, onAction, onClo
           name="basis"
           required
           maxLength={500}
-          value={basisVal}
-          onChange={e => setBasisVal(e.target.value)}
+          value={basisIsUserText ? basisVal : t(basisVal)}
+          onChange={e => { setBasisVal(e.target.value); setBasisIsUserText(true); }}
         />
       </label>
     </div>
@@ -671,8 +673,10 @@ export function ReceivableCrudForm({ actor = null, mode = 'create', row = null, 
         : ''
   );
 
+  const [commitmentIsUserText, setCommitmentIsUserText] = useState(isEdit);
+
   // Chức năng: Áp dụng (applySelectedOrder - Selected Order) phục vụ xử lý dữ liệu trong FinanceForms.jsx
-  const applySelectedOrder = nextRowId => {
+  const applySelectedOrder = useCallback(nextRowId => {
     setSelectedRowId(nextRowId);
     const found = effectiveItems.find(item => String(item.rowId) === String(nextRowId));
     if (!found) {
@@ -701,15 +705,16 @@ export function ReceivableCrudForm({ actor = null, mode = 'create', row = null, 
       if (!isEdit) {
         setOriginalAmountVal(findLinkedReceivableAmountForOrder(found, finance));
         setCommitmentNoteVal(`Thu công nợ đơn hàng PO ${found.poId} - ${found.vendorItemNo}`);
+        setCommitmentIsUserText(false);
       }
     }
-  };
+  }, [effectiveItems, isEdit, finance, allArAndRevDocs]);
 
   useEffect(() => {
     if (!isEdit && !selectedRowId && effectiveItems.length > 0) {
       applySelectedOrder(String(effectiveItems[0].rowId));
     }
-  }, [effectiveItems.length]);
+  }, [effectiveItems, isEdit, selectedRowId, applySelectedOrder]);
 
   useEffect(() => {
     if (!isEdit && debouncedItemSearch.trim() && filteredItems.length > 0) {
@@ -717,7 +722,7 @@ export function ReceivableCrudForm({ actor = null, mode = 'create', row = null, 
         applySelectedOrder(String(filteredItems[0].rowId));
       }
     }
-  }, [debouncedItemSearch, filteredItems]);
+  }, [debouncedItemSearch, filteredItems, isEdit, selectedRowId, applySelectedOrder]);
 
   // Chức năng: Xử lý sự kiện (handleCategoryFilterChange - Category Filter Change) phục vụ xử lý dữ liệu trong FinanceForms.jsx
   const handleCategoryFilterChange = event => {
@@ -772,7 +777,7 @@ export function ReceivableCrudForm({ actor = null, mode = 'create', row = null, 
           <select value={categoryFilter} onChange={handleCategoryFilterChange}>
             <option value="all">{t("Tất cả ngành hàng")}</option>
             {existingCategories.map(cat => (
-              <option key={cat} value={cat}>{cat}</option>
+              <option key={cat} value={cat}>{t(cat)}</option>
             ))}
           </select>
         </label>
@@ -795,7 +800,7 @@ export function ReceivableCrudForm({ actor = null, mode = 'create', row = null, 
             <option value="">{t("— Nhập thủ công —")}</option>
             {filteredItems.map(item => (
               <option key={item.rowId} value={item.rowId}>
-                {item.poId} · {t(item.vendorItemNo)} · {item.category} · SL đặt: {item.orderedQty || 0} {item.unit || 'pcs'} (Đã giao: {item.deliveredQty || 0}) · {formatMoney(computeOrderTotalVnd(item) || 0)}
+                {item.poId} · {t(item.vendorItemNo)} · {t(item.category)} · {t('SL đặt:')} {item.orderedQty || 0} {item.unit || 'pcs'} ({t('Đã giao:')} {item.deliveredQty || 0}) · {formatMoney(computeOrderTotalVnd(item) || 0)}
               </option>
             ))}
           </select>
@@ -963,8 +968,8 @@ export function ReceivableCrudForm({ actor = null, mode = 'create', row = null, 
           <textarea
             name="commitmentNote"
             maxLength={500}
-            value={commitmentNoteVal}
-            onChange={e => setCommitmentNoteVal(e.target.value)}
+            value={commitmentIsUserText ? commitmentNoteVal : t(commitmentNoteVal)}
+            onChange={e => { setCommitmentNoteVal(e.target.value); setCommitmentIsUserText(true); }}
           />
         </label>
       </div>
@@ -1002,7 +1007,6 @@ export function PayableCrudForm({ actor = null, mode = 'create', row = null, ite
     [effectiveItems, debouncedItemSearch, categoryFilter]
   );
 
-  const [isStandalone, setIsStandalone] = useState(() => Boolean(row?.isStandalone || (isEdit && !row?.poLineId && row?.poId === 'NGOAI-PO')));
   const [selectedRowId, setSelectedRowId] = useState(
     initialMatched ? String(initialMatched.rowId) : ''
   );
@@ -1044,8 +1048,10 @@ export function PayableCrudForm({ actor = null, mode = 'create', row = null, ite
         : ''
   );
 
+  const [requestNoteIsUserText, setRequestNoteIsUserText] = useState(isEdit);
+
   // Chức năng: Áp dụng (applySelectedOrder - Selected Order) phục vụ xử lý dữ liệu trong FinanceForms.jsx
-  const applySelectedOrder = nextRowId => {
+  const applySelectedOrder = useCallback(nextRowId => {
     setSelectedRowId(nextRowId);
     const found = effectiveItems.find(item => String(item.rowId) === String(nextRowId));
     if (found) {
@@ -1064,15 +1070,16 @@ export function PayableCrudForm({ actor = null, mode = 'create', row = null, ite
         setRequestNoteVal(
           `Thanh toán PO ${found.poId} - ${found.vendorItemNo} (${found.vendorName})`
         );
+        setRequestNoteIsUserText(false);
       }
     }
-  };
+  }, [effectiveItems, isEdit, allApDocs]);
 
   useEffect(() => {
     if (!isEdit && !selectedRowId && effectiveItems.length > 0) {
       applySelectedOrder(String(effectiveItems[0].rowId));
     }
-  }, [effectiveItems.length]);
+  }, [effectiveItems, isEdit, selectedRowId, applySelectedOrder]);
 
   useEffect(() => {
     if (!isEdit && debouncedItemSearch.trim() && filteredItems.length > 0) {
@@ -1080,7 +1087,7 @@ export function PayableCrudForm({ actor = null, mode = 'create', row = null, ite
         applySelectedOrder(String(filteredItems[0].rowId));
       }
     }
-  }, [debouncedItemSearch, filteredItems]);
+  }, [debouncedItemSearch, filteredItems, isEdit, selectedRowId, applySelectedOrder]);
 
   // Chức năng: Xử lý sự kiện (handleCategoryFilterChange - Category Filter Change) phục vụ xử lý dữ liệu trong FinanceForms.jsx
   const handleCategoryFilterChange = event => {
@@ -1128,7 +1135,7 @@ export function PayableCrudForm({ actor = null, mode = 'create', row = null, ite
           <select value={categoryFilter} onChange={handleCategoryFilterChange}>
             <option value="all">{t("Tất cả ngành hàng")}</option>
             {existingCategories.map(cat => (
-              <option key={cat} value={cat}>{cat}</option>
+              <option key={cat} value={cat}>{t(cat)}</option>
             ))}
           </select>
         </label>
@@ -1276,8 +1283,8 @@ export function PayableCrudForm({ actor = null, mode = 'create', row = null, ite
           <textarea
             name="requestNote"
             maxLength={500}
-            value={requestNoteVal}
-            onChange={e => setRequestNoteVal(e.target.value)}
+            value={requestNoteIsUserText ? requestNoteVal : t(requestNoteVal)}
+            onChange={e => { setRequestNoteVal(e.target.value); setRequestNoteIsUserText(true); }}
           />
         </label>
       </div>

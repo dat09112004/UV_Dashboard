@@ -176,12 +176,12 @@ export default function FulfillmentTable({
                 <span className="fulfillment-category">
                   {isInbound && item.vendorName ? `${t(item.vendorName)} · ` : ''}
                   {isOutbound && item.customerName ? `${t('KH')}: ${item.customerName} · ` : ''}
-                  {item.category}
-                  {!isOutbound && (item.onProcessPct != null || item.packagingPct != null) ? ` · SX: ${formatPercent(item.onProcessPct ?? 0)} · ĐG: ${formatPercent(item.packagingPct ?? 0)}` : ''}
+                  {t(item.category)}
+                  {!isOutbound && (item.onProcessPct != null || item.packagingPct != null) ? t(` · SX: ${formatPercent(item.onProcessPct ?? 0)} · ĐG: ${formatPercent(item.packagingPct ?? 0)}`) : ''}
                 </span>
                 {(isSaleOwned || item.assignedSaleName) && item.priorityRank !== 0 && (
                   <small className="block text-[11px] italic text-emerald-800 mt-0.5">
-                    {item.ownerType === 'transferred' ? t('Sale phụ trách:') : t('Sale tạo & đảm nhận:')} {item.assignedSaleName || item.createdByName || 'Phòng Sale'}
+                    {item.ownerType === 'transferred' ? t('Sale phụ trách:') : t('Sale tạo & đảm nhận:')} {item.assignedSaleName || item.createdByName || t('Phòng Sale')}
                   </small>
                 )}
                 {item.pendingTransfer && (

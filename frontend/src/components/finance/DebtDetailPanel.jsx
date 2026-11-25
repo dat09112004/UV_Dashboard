@@ -11,7 +11,7 @@ import AlertAssignmentLine from '../common/AlertAssignmentLine.jsx';
 
 // Chức năng: Cửa sổ xem chi tiết khoản công nợ phải thu/phải trả, kiểm soát quyền nhận việc, chuyển giao 2 chiều có xác nhận và nhắc việc sếp
 export default function DebtDetailPanel({
-  actor, row, debtType, role, history, onOpen, onClose, onDelete, onClaim, onTransferRespond, canSplit = true,
+  actor, row, debtType, role, history, onOpen, onClose, onClaim, onTransferRespond, canSplit = true,
   tasks = [], accounts = [], reminders = [], onRemindAlert,
 }) {
   const isAr = debtType === 'receivables';
@@ -26,7 +26,6 @@ export default function DebtDetailPanel({
 
   const isSettled = Number(row?.remaining ?? 0) <= 0;
   const canManageCrud = canWorkOnRecord && !isSettled;
-  const canDeleteRow = false;
   const action = canWorkOnRecord && !isSettled
     ? (isAr ? receivableAction(row, role) : payableAction(row, role, canSplit))
     : null;

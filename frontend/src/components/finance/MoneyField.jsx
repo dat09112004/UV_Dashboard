@@ -22,17 +22,17 @@ export function formatMoneyInputHint(rawValue) {
   if (!/^\d+$/.test(digits)) return '';
   const num = Number(digits);
   if (!Number.isSafeInteger(num)) return '';
-  const formatted = new Intl.NumberFormat('vi-VN').format(neg ? -num : num);
+  const formatted = new Intl.NumberFormat(locale()).format(neg ? -num : num);
   let shortUnit = '';
   if (num >= 1000000000) {
-    const val = (num / 1000000000).toLocaleString('vi-VN', { maximumFractionDigits: 3 });
-    shortUnit = ` (${neg ? '-' : ''}${val} tỷ)`;
+    const val = (num / 1000000000).toLocaleString(locale(), { maximumFractionDigits: 3 });
+    shortUnit = ` (${neg ? '-' : ''}${val} ${t('tỷ')})`;
   } else if (num >= 1000000) {
-    const val = (num / 1000000).toLocaleString('vi-VN', { maximumFractionDigits: 3 });
-    shortUnit = ` (${neg ? '-' : ''}${val} triệu)`;
+    const val = (num / 1000000).toLocaleString(locale(), { maximumFractionDigits: 3 });
+    shortUnit = ` (${neg ? '-' : ''}${val} ${t('triệu')})`;
   } else if (num >= 1000) {
-    const val = (num / 1000).toLocaleString('vi-VN', { maximumFractionDigits: 3 });
-    shortUnit = ` (${neg ? '-' : ''}${val} nghìn)`;
+    const val = (num / 1000).toLocaleString(locale(), { maximumFractionDigits: 3 });
+    shortUnit = ` (${neg ? '-' : ''}${val} ${t('nghìn')})`;
   }
   return `= ${formatted} VND${shortUnit}`;
 }

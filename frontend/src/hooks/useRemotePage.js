@@ -67,7 +67,7 @@ export function useRemotePage(load, params, enabled, revision, limit = 10, sessi
         setFailure({ requestKey, message: err.message });
       });
     return () => controller.abort();
-  }, [load, enabled, filterKey, page, limit, requestKey]);
+  }, [load, enabled, filterKey, page, limit, requestKey, scopedFilterKey]);
 
   const metadata = validResult?.pagination;
   const items = validResult?.items ?? [];
