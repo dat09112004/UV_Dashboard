@@ -140,6 +140,42 @@ export default function App() {
   const [forgotBusy, setForgotBusy] = useState(false);
   const [forgotError, setForgotError] = useState('');
   const [forgotStatus, setForgotStatus] = useState('');
+  const [forgotCooldownUntil, setForgotCooldownUntil] = useState(() => {
+    try {
+      const saved = Number(sessionStorage.getItem('uv-forgot-cooldown-until') || 0);
+      return saved > Date.now() ? saved : 0;
+    } catch { return 0; }
+  });
+  const [forgotCooldownSec, setForgotCooldownSec] = useState(() => {
+    try {
+      const saved = Number(sessionStorage.getItem('uv-forgot-cooldown-until') || 0);
+      return saved > Date.now() ? Math.ceil((saved - Date.now()) / 1000) : 0;
+    } catch { return 0; }
+  });
+  useEffect(() => {
+    if (!forgotCooldownUntil) {
+      setForgotCooldownSec(0);
+      return undefined;
+    }
+    const tick = () => {
+      const rem = Math.max(0, Math.ceil((forgotCooldownUntil - Date.now()) / 1000));
+      setForgotCooldownSec(rem);
+      if (rem <= 0) {
+        setForgotCooldownUntil(0);
+        try { sessionStorage.removeItem('uv-forgot-cooldown-until'); } catch {}
+      }
+    };
+    tick();
+    const timer = setInterval(tick, 1000);
+    return () => clearInterval(timer);
+  }, [forgotCooldownUntil]);
+  const startForgotCooldown = (seconds = 180) => {
+    const until = Date.now() + Math.max(1, Number(seconds) || 180) * 1000;
+    setForgotCooldownUntil(until);
+    setForgotCooldownSec(Math.max(1, Number(seconds) || 180));
+    try { sessionStorage.setItem('uv-forgot-cooldown-until', String(until)); } catch {}
+  };
+  const formatCooldown = sec => `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
 
   const [currentAccountId, setCurrentAccountId] = useState(() => initialStoredSession?.accountId || initialStoredSession?.account?.id || null);
   const [isRestoringSession, setIsRestoringSession] = useState(() => Boolean(initialStoredSession?.hasSession || initialStoredSession?.token));
@@ -1298,7 +1334,8 @@ export default function App() {
                       setForgotBusy(true);
                       try {
                         const res = await requestPasswordResetOtpApi(cleanEmail);
-                        setForgotStatus(res?.message || 'Mã OTP 6 chữ số đã được gửi từ noreply@uyenvu-international.com (hiệu lực 3 phút).');
+                        setForgotStatus('');
+                        startForgotCooldown(res?.cooldownSeconds || 180);
                         setForgotStep('verify');
                       } catch (err) {
                         setForgotError(err?.message || 'Không thể gửi mã OTP. Vui lòng thử lại.');
@@ -1320,11 +1357,12 @@ export default function App() {
                         placeholder="ten.nv@uyenvu-international.com"
                       />
                     </div>
-                    <p className="text-xs text-slate-600 m-0">
-                      {t("Hệ thống sẽ gửi mã OTP 6 chữ số từ địa chỉ noreply@uyenvu-international.com (hiệu lực 3 phút).")}
-                    </p>
-                    <button type="submit" className="login-submit" disabled={forgotBusy}>
-                      {t(forgotBusy ? 'Đang gửi mã OTP…' : 'Gửi mã OTP qua Email')}
+                    <button type="submit" className="login-submit" disabled={forgotBusy || forgotCooldownSec > 0}>
+                      {forgotBusy
+                        ? t('Đang gửi mã OTP…')
+                        : forgotCooldownSec > 0
+                          ? `${t('Vui lòng chờ')} (${formatCooldown(forgotCooldownSec)})`
+                          : t('Gửi mã OTP qua Email')}
                     </button>
                     <div className="login-options">
                       <button type="button" onClick={() => { setForgotMode(false); setForgotStep('email'); setForgotError(''); setForgotStatus(''); }}>
@@ -1412,13 +1450,15 @@ export default function App() {
                     <div className="login-options">
                       <button
                         type="button"
-                        disabled={forgotBusy}
+                        disabled={forgotBusy || forgotCooldownSec > 0}
                         onClick={async () => {
+                          if (forgotCooldownSec > 0) return;
                           setForgotError('');
                           setForgotBusy(true);
                           try {
                             const res = await requestPasswordResetOtpApi(String(forgotEmail || '').trim());
-                            setForgotStatus(res?.message || 'Đã gửi lại mã OTP mới qua email noreply@uyenvu-international.com.');
+                            setForgotStatus('');
+                            startForgotCooldown(res?.cooldownSeconds || 180);
                           } catch (err) {
                             setForgotError(err?.message || 'Không thể gửi lại mã OTP.');
                           } finally {
@@ -1426,7 +1466,9 @@ export default function App() {
                           }
                         }}
                       >
-                        {t("Gửi lại mã OTP")}
+                        {forgotCooldownSec > 0
+                          ? `${t("Gửi lại mã OTP")} (${formatCooldown(forgotCooldownSec)})`
+                          : t("Gửi lại mã OTP")}
                       </button>
                       <button type="button" onClick={() => { setForgotMode(false); setForgotStep('email'); setForgotError(''); setForgotStatus(''); }}>
                         {t("Quay lại đăng nhập")}
@@ -2392,7 +2434,7 @@ export default function App() {
               {workspaceError && <div className="workspace-error" role="alert" tabIndex={-1}><AlertTriangle size={18} /><span>{t(workspaceError)}</span></div>}
               {workspacePanel.type === 'ITEM_DETAIL' && (() => {
                 const orderAccess = canActorEditOrder(currentUser, workspacePanel.data, allDirectoryTasks, accounts);
-                return <ItemDetailPanel initialFormTab={workspacePanel.initialFormTab || (orderView === 'outbound' ? 'outbound' : 'inbound')} currentUser={currentUser} onRequestOrderTransfer={handleRequestOrderTransfer} onRespondOrderTransfer={handleRespondOrderTransfer} showFinancials={currentRole !== 'Sale' && (showRevenue || showReceivables || showPayables)} serverError={workspaceError} item={workspacePanel.data} reportDate={reportDate} canEdit={canUpdateProgress && orderAccess.allowed} readOnlyReason={canUpdateProgress && !orderAccess.allowed ? `${t('Đơn hàng này đang do')} ${orderAccess.ownerLabel} ${t('phụ trách. Bạn chỉ có quyền xem, không thể chỉnh sửa.')}` : ''} canLowerAlerts={isExecutiveRole(currentRole)} financials={itemFinancialSummary(workspacePanel.data, { revenue: showRevenue ? revenueRecords : [], receivables: classifiedAr, payables: classifiedAp })} isSaving={isSavingWorkspace} onSubmit={handleUpdateItemProgress} onClose={requestCloseWorkspace} tasks={allDirectoryTasks} accounts={accounts} reminders={allReminders} onRemindAlert={canRemindBoss ? remindWorkAlert : undefined} />;
+                return <ItemDetailPanel initialFormTab={workspacePanel.initialFormTab || (orderView === 'outbound' ? 'outbound' : 'inbound')} currentUser={currentUser} onRequestOrderTransfer={handleRequestOrderTransfer} onRespondOrderTransfer={handleRespondOrderTransfer} showFinancials={currentRole !== 'Sale' && (showRevenue || showReceivables || showPayables)} serverError={workspaceError} item={workspacePanel.data} reportDate={reportDate} canEdit={canUpdateProgress && orderAccess.allowed} readOnlyReason={canUpdateProgress && !orderAccess.allowed ? (orderAccess.unassignedExecutive ? t('Đơn hàng do Ban Giám đốc tạo chưa có nhân viên Sale nhận phụ trách nên chưa ai được phép chỉnh sửa. Hãy chuyển đơn và chờ nhân viên Sale đồng ý nhận trước.') : `${t('Đơn hàng này đang do')} ${orderAccess.ownerLabel} ${t('phụ trách. Bạn chỉ có quyền xem, không thể chỉnh sửa.')}`) : ''} canLowerAlerts={isExecutiveRole(currentRole)} financials={itemFinancialSummary(workspacePanel.data, { revenue: showRevenue ? revenueRecords : [], receivables: classifiedAr, payables: classifiedAp })} isSaving={isSavingWorkspace} onSubmit={handleUpdateItemProgress} onClose={requestCloseWorkspace} tasks={allDirectoryTasks} accounts={accounts} reminders={allReminders} onRemindAlert={canRemindBoss ? remindWorkAlert : undefined} />;
               })()}
               {['ALLOCATE_AR', 'CREATE_AR', 'EDIT_AR', 'SUBMIT_AR', 'REVIEW_AR', 'CONFIRM_AR', 'RECORD_REV', 'CREATE_AP', 'EDIT_AP', 'SPLIT_AP', 'SUBMIT_AP', 'REVIEW_AP', 'PAY_AP'].includes(workspacePanel.type) &&
                 (!financeLoaded || (needsDebtRecord && !workspaceDebt) ? <p role="status">{t(dataError || (dataLoading || !financeLoaded

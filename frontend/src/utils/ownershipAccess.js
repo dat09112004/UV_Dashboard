@@ -55,16 +55,28 @@ export function resolveOrderResponsible(item, tasks = [], accounts = []) {
 
 // Chức năng: Kiểm tra tài khoản hiện tại có quyền sửa/cập nhật/giao hàng cho đơn hàng hay chỉ được xem
 export function canActorEditOrder(actor, item, tasks = [], accounts = []) {
-  if (!actor || !item) return { allowed: false, ownerLabel: '' };
-  if (isLeadershipRole(actor.role)) return { allowed: true, ownerLabel: '' };
-  if (actor.role !== 'Sale') return { allowed: false, ownerLabel: '' };
+  if (!actor || !item) return { allowed: false, ownerLabel: '', unassignedExecutive: false };
 
   const { ids, ownerLabel } = resolveOrderResponsible(item, tasks, accounts);
+  const isExecutiveOrder = item.ownerType === 'executive_created' || isLeadershipRole(item.createdByRole);
+
+  // Đơn hàng do CEO/Admin tạo nhưng chưa có nhân viên Sale nào nhận phụ trách -> KHÔNG AI được chỉnh sửa
+  if (isExecutiveOrder && ids.size === 0) {
+    return {
+      allowed: false,
+      unassignedExecutive: true,
+      ownerLabel: 'chưa có nhân viên Sale nhận phụ trách',
+    };
+  }
+
+  if (isLeadershipRole(actor.role)) return { allowed: true, ownerLabel: '', unassignedExecutive: false };
+  if (actor.role !== 'Sale') return { allowed: false, ownerLabel: '', unassignedExecutive: false };
+
   if (ids.size === 0) {
-    return { allowed: true, ownerLabel: '' };
+    return { allowed: true, ownerLabel: '', unassignedExecutive: false };
   }
   const allowed = ids.has(String(actor.id || '').trim());
-  return { allowed, ownerLabel };
+  return { allowed, ownerLabel, unassignedExecutive: false };
 }
 
 // Chức năng: Xác định danh sách kế toán phụ trách của một bản ghi công nợ (AR/AP) hoặc doanh thu
